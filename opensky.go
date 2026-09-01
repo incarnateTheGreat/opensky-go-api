@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -12,8 +13,29 @@ import (
 // =============================================================================
 
 // openSkyBaseURL is the base URL for OpenSky API
-// This can be overridden in tests to point to a mock server
+// Can be overridden via OPENSKY_BASE_URL env var (e.g., for Cloudflare Worker proxy)
 var openSkyBaseURL = "https://opensky-network.org"
+
+// openSkyClient is a shared HTTP client for OpenSky requests
+var openSkyClient *http.Client
+
+// openSkyAPIKey is an optional key for authenticated proxy requests
+var openSkyAPIKey string
+
+func init() {
+	// Allow overriding the base URL (for Cloudflare Worker proxy)
+	if baseURL := os.Getenv("OPENSKY_BASE_URL"); baseURL != "" {
+		openSkyBaseURL = baseURL
+		fmt.Printf("✅ OpenSky base URL: %s\n", baseURL)
+	}
+
+	// Optional API key for proxy authentication
+	openSkyAPIKey = os.Getenv("OPENSKY_API_KEY")
+
+	openSkyClient = &http.Client{
+		Timeout: 30 * time.Second,
+	}
+}
 
 // fetchFlights calls the OpenSky Network API and returns parsed flights
 // Uses cache to avoid hitting the API too frequently
@@ -84,10 +106,18 @@ type cachedFlightResult struct {
 }
 
 // doFetch handles the HTTP request and parsing for real-time endpoints
-func doFetch(url string) ([]Flight, int64, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+func doFetch(targetURL string) ([]Flight, int64, error) {
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
 
-	resp, err := client.Get(url)
+	// Add proxy auth key if configured
+	if openSkyAPIKey != "" {
+		req.Header.Set("X-Proxy-Key", openSkyAPIKey)
+	}
+
+	resp, err := openSkyClient.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch from OpenSky: %w", err)
 	}
