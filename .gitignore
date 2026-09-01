@@ -12,3 +12,4 @@ server
 .env
 
 tmp
+opensky-go-api

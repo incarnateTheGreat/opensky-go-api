@@ -47,7 +47,12 @@ func main() {
 	// Create router
 	router := gin.Default()
 
-	// Health check
+	// Apply rate limiting middleware globally
+	// 10 requests/second per IP with burst of 20
+	router.Use(RateLimitMiddleware(defaultRateLimiter))
+	fmt.Println("✅ Rate limiting enabled (10 req/s per IP)")
+
+	// Health check (rate limited but lightweight)
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
