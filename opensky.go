@@ -24,44 +24,58 @@ var (
 var openSkyBaseURL = "https://opensky-network.org"
 
 // fetchAccessToken exchanges client credentials for an access token
-// This implements OAuth2 Client Credentials flow
+// This implements OAuth2 Client Credentials flow with retry logic
 func fetchAccessToken() error {
 	if openSkyClientID == "" || openSkyClientSecret == "" {
 		return fmt.Errorf("OpenSky credentials not configured. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET")
 	}
 
-	// Build form data for token request
-	data := fmt.Sprintf("grant_type=client_credentials&client_id=%s&client_secret=%s",
-		openSkyClientID, openSkyClientSecret)
+	// Retry up to 3 times with increasing delays
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			delay := time.Duration(attempt) * 2 * time.Second
+			fmt.Printf("   Retry attempt %d after %v...\n", attempt, delay)
+			time.Sleep(delay)
+		}
 
-	req, err := http.NewRequest("POST",
-		"https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
-		strings.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("failed to create token request: %w", err)
+		// Build form data for token request
+		data := fmt.Sprintf("grant_type=client_credentials&client_id=%s&client_secret=%s",
+			openSkyClientID, openSkyClientSecret)
+
+		req, err := http.NewRequest("POST",
+			"https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
+			strings.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("failed to create token request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to fetch token: %w", err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("token request failed with status %d", resp.StatusCode)
+			continue
+		}
+
+		var tokenResp TokenResponse
+		if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+			return fmt.Errorf("failed to decode token response: %w", err)
+		}
+
+		openSkyAccessToken = tokenResp.AccessToken
+		fmt.Println("✅ OpenSky access token acquired")
+		return nil
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to fetch token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("token request failed with status %d", resp.StatusCode)
-	}
-
-	var tokenResp TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return fmt.Errorf("failed to decode token response: %w", err)
-	}
-
-	openSkyAccessToken = tokenResp.AccessToken
-	fmt.Println("✅ OpenSky access token acquired")
-	return nil
+	return lastErr
 }
 
 // fetchFlights calls the OpenSky Network API and returns parsed flights
