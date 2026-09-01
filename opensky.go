@@ -121,7 +121,9 @@ func doFetch(targetURL string) ([]Flight, int64, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch from OpenSky: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, 0, fmt.Errorf("OpenSky returned status %d", resp.StatusCode)

@@ -74,5 +74,8 @@ func main() {
 	}
 
 	fmt.Printf("🛫 OpenSky API server starting on port %s\n", port)
-	router.Run(":" + port)
+	if err := router.Run(":" + port); err != nil {
+		fmt.Printf("server failed to start: %v\n", err)
+		os.Exit(1)
+	}
 }

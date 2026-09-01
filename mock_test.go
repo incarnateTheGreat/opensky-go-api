@@ -7,6 +7,13 @@ import (
 	"testing"
 )
 
+func mustEncodeJSON(t *testing.T, w http.ResponseWriter, v interface{}) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Fatalf("failed to encode JSON response: %v", err)
+	}
+}
+
 // =============================================================================
 // MOCK OPENSKY API TESTS - Testing with a mock HTTP server
 // =============================================================================
@@ -54,7 +61,7 @@ func TestFetchFlights_MockServer(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		mustEncodeJSON(t, w, response)
 	}))
 	defer mockServer.Close()
 
@@ -109,7 +116,7 @@ func TestFetchFlights_ByICAO24(t *testing.T) {
 			Time:   1234567890,
 			States: [][]interface{}{},
 		}
-		json.NewEncoder(w).Encode(response)
+		mustEncodeJSON(t, w, response)
 	}))
 	defer mockServer.Close()
 
@@ -146,7 +153,7 @@ func TestFetchFlightsByArea_MockServer(t *testing.T) {
 				{"xyz789", "DAL456 ", "United States", nil, 1234567890.0, -100.0, 40.0, 11000.0, false, 300.0, 90.0, 0.0, nil, 11500.0, "5555", false, 0, 0},
 			},
 		}
-		json.NewEncoder(w).Encode(response)
+		mustEncodeJSON(t, w, response)
 	}))
 	defer mockServer.Close()
 
@@ -211,7 +218,9 @@ func TestFetchFlights_ServerError(t *testing.T) {
 func TestFetchFlights_InvalidJSON(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("this is not valid JSON"))
+		if _, err := w.Write([]byte("this is not valid JSON")); err != nil {
+			t.Fatalf("failed to write response body: %v", err)
+		}
 	}))
 	defer mockServer.Close()
 
@@ -233,7 +242,7 @@ func TestFetchFlights_EmptyStates(t *testing.T) {
 			Time:   1234567890,
 			States: nil, // No flights
 		}
-		json.NewEncoder(w).Encode(response)
+		mustEncodeJSON(t, w, response)
 	}))
 	defer mockServer.Close()
 
@@ -262,7 +271,7 @@ func TestCachePreventsDuplicateRequests(t *testing.T) {
 			Time:   1234567890,
 			States: [][]interface{}{},
 		}
-		json.NewEncoder(w).Encode(response)
+		mustEncodeJSON(t, w, response)
 	}))
 	defer mockServer.Close()
 
@@ -289,9 +298,4 @@ func TestCachePreventsDuplicateRequests(t *testing.T) {
 	if requestCount != 2 {
 		t.Errorf("expected 2 requests after cache clear, got %d", requestCount)
 	}
-}
-
-// strPtr is a helper to create string pointers for test data
-func strPtr(s string) *string {
-	return &s
 }

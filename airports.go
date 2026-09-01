@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,7 +76,9 @@ func loadAirports(filepath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open airports file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
@@ -240,38 +241,6 @@ func promoteAirport(airport Airport) {
 	fmt.Printf("📌 Promoted airport to searchable: %s (%s)\n", airport.ICAO, airport.Name)
 }
 
-// lookupAirportsByCity finds airports serving a city (by municipality name)
-func lookupAirportsByCity(cityName string) []Airport {
-	return airportsByCity[strings.ToLower(cityName)]
-}
-
-// findNearbyAirports returns airports within a given radius (in km) of coordinates
-// Only returns medium and large airports, sorted by distance
-func findNearbyAirports(lat, lng, radiusKm float64) []Airport {
-	var nearby []Airport
-
-	for _, airport := range allAirports {
-		// Only medium and large airports
-		if airport.Type != "large_airport" && airport.Type != "medium_airport" {
-			continue
-		}
-
-		dist := haversineDistance(lat, lng, airport.Lat, airport.Lng)
-		if dist <= radiusKm {
-			nearby = append(nearby, airport)
-		}
-	}
-
-	// Sort by distance
-	sort.Slice(nearby, func(i, j int) bool {
-		distI := haversineDistance(lat, lng, nearby[i].Lat, nearby[i].Lng)
-		distJ := haversineDistance(lat, lng, nearby[j].Lat, nearby[j].Lng)
-		return distI < distJ
-	})
-
-	return nearby
-}
-
 // haversineDistance calculates the distance between two points in km
 // using the Haversine formula
 func haversineDistance(lat1, lng1, lat2, lng2 float64) float64 {
@@ -313,13 +282,6 @@ func lookupAirportByIATA(iata string) (Airport, bool) {
 		promoteAirport(airport)
 	}
 	return airport, found
-}
-
-// getPromotedCount returns the number of small airports promoted to searchable
-func getPromotedCount() int {
-	searchMu.RLock()
-	defer searchMu.RUnlock()
-	return len(promotedAirports)
 }
 
 // searchAirports finds airports matching a query string

@@ -165,7 +165,9 @@ func TestGetAirportByICAO_NotFound(t *testing.T) {
 	}
 
 	var response map[string]string
-	json.Unmarshal(w.Body.Bytes(), &response)
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
 	if response["error"] == "" {
 		t.Error("expected error message")
 	}

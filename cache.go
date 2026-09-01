@@ -116,11 +116,7 @@ func (c *Cache) StartCleanupRoutine(interval time.Duration) chan struct{} {
 		for {
 			select {
 			case <-ticker.C:
-				removed := c.Cleanup()
-				if removed > 0 {
-					// Uncomment for debugging:
-					// fmt.Printf("🧹 Cache cleanup: removed %d expired entries\n", removed)
-				}
+				_ = c.Cleanup()
 			case <-stop:
 				return
 			}
