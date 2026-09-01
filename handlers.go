@@ -2,11 +2,9 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -270,139 +268,5 @@ func getAirportByICAO(c *gin.Context) {
 		"region":       airport.Region,
 		"lat":          airport.Lat,
 		"lng":          airport.Lng,
-		"arrivals":     fmt.Sprintf("/airports/%s/arrivals", airport.ICAO),
-		"departures":   fmt.Sprintf("/airports/%s/departures", airport.ICAO),
 	})
-}
-
-// getArrivals handles GET /airports/:icao/arrivals
-func getArrivals(c *gin.Context) {
-	airport := c.Param("icao")
-	begin, end := parseTimeRange(c)
-
-	flights, err := fetchArrivals(airport, begin, end)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, HistoricalFlightsResponse{
-		Airport: airport,
-		Type:    "arrivals",
-		Begin:   begin,
-		End:     end,
-		Count:   len(flights),
-		Flights: flights,
-	})
-}
-
-// getDepartures handles GET /airports/:icao/departures
-func getDepartures(c *gin.Context) {
-	airport := c.Param("icao")
-	begin, end := parseTimeRange(c)
-
-	flights, err := fetchDepartures(airport, begin, end)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, HistoricalFlightsResponse{
-		Airport: airport,
-		Type:    "departures",
-		Begin:   begin,
-		End:     end,
-		Count:   len(flights),
-		Flights: flights,
-	})
-}
-
-// parseTimeRange extracts begin/end timestamps from query params
-// Defaults to last 2 hours, max 7 days
-func parseTimeRange(c *gin.Context) (begin, end int64) {
-	now := time.Now().Unix()
-
-	end = now
-	begin = now - (2 * 60 * 60)
-
-	if beginStr := c.Query("begin"); beginStr != "" {
-		if b, err := strconv.ParseInt(beginStr, 10, 64); err == nil {
-			begin = b
-		}
-	}
-	if endStr := c.Query("end"); endStr != "" {
-		if e, err := strconv.ParseInt(endStr, 10, 64); err == nil {
-			end = e
-		}
-	}
-
-	if begin >= end {
-		begin = end - (2 * 60 * 60)
-	}
-
-	maxRange := int64(7 * 24 * 60 * 60)
-	if end-begin > maxRange {
-		begin = end - maxRange
-	}
-
-	return begin, end
-}
-
-func debugOpenSky(c *gin.Context) {
-	results := gin.H{
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"credentialsSet": openSkyClientID != "" && openSkyClientSecret != "",
-		"hasAccessToken": openSkyAccessToken != "",
-	}
-
-	// Test DNS resolution
-	addrs, dnsErr := net.LookupHost("auth.opensky-network.org")
-	if dnsErr != nil {
-		results["dnsResolution"] = gin.H{"error": dnsErr.Error()}
-	} else {
-		results["dnsResolution"] = gin.H{"addresses": addrs}
-	}
-
-	// Test TCP connection
-	conn, tcpErr := net.DialTimeout("tcp", "auth.opensky-network.org:443", 10*time.Second)
-	if tcpErr != nil {
-		results["tcpConnection"] = gin.H{"error": tcpErr.Error()}
-	} else {
-		conn.Close()
-		results["tcpConnection"] = gin.H{"status": "success"}
-	}
-
-	// Test HTTPS request (just HEAD, no auth)
-	httpClient := &http.Client{Timeout: 15 * time.Second}
-	req, _ := http.NewRequest("HEAD", "https://auth.opensky-network.org", nil)
-	httpStart := time.Now()
-	resp, httpErr := httpClient.Do(req)
-	httpDuration := time.Since(httpStart)
-	if httpErr != nil {
-		results["httpsRequest"] = gin.H{"error": httpErr.Error(), "duration": httpDuration.String()}
-	} else {
-		resp.Body.Close()
-		results["httpsRequest"] = gin.H{"status": resp.StatusCode, "duration": httpDuration.String()}
-	}
-
-	// Test token fetch if credentials are set
-	if openSkyClientID != "" && openSkyClientSecret != "" {
-		tokenStart := time.Now()
-		data := fmt.Sprintf("grant_type=client_credentials&client_id=%s&client_secret=%s",
-			openSkyClientID, openSkyClientSecret)
-		req, _ := http.NewRequest("POST",
-			"https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
-			strings.NewReader(data))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, tokenErr := httpClient.Do(req)
-		tokenDuration := time.Since(tokenStart)
-		if tokenErr != nil {
-			results["tokenFetch"] = gin.H{"error": tokenErr.Error(), "duration": tokenDuration.String()}
-		} else {
-			resp.Body.Close()
-			results["tokenFetch"] = gin.H{"status": resp.StatusCode, "duration": tokenDuration.String()}
-		}
-	}
-
-	c.JSON(http.StatusOK, results)
 }

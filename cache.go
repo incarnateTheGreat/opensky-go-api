@@ -137,11 +137,7 @@ func (c *Cache) StartCleanupRoutine(interval time.Duration) chan struct{} {
 // flightCache caches OpenSky flight data (short TTL - data updates frequently)
 var flightCache = NewCache()
 
-// historicalCache caches arrivals/departures (longer TTL - historical data)
-var historicalCache = NewCache()
-
 // Cache TTL constants
 const (
-	FlightCacheTTL     = 15 * time.Second // OpenSky updates every ~10 seconds
-	HistoricalCacheTTL = 5 * time.Minute  // Historical data doesn't change often
+	FlightCacheTTL = 15 * time.Second // OpenSky updates every ~10 seconds
 )

@@ -32,46 +32,12 @@ type FlightsResponse struct {
 	Flights []Flight `json:"flights"`
 }
 
-// HistoricalFlight represents a flight from OpenSky's arrival/departure endpoints
-// This has airport info unlike real-time Flight
-type HistoricalFlight struct {
-	Icao24                     string  `json:"icao24"`
-	FirstSeen                  int64   `json:"firstSeen"`
-	EstDepartureAirport        *string `json:"estDepartureAirport"`
-	LastSeen                   int64   `json:"lastSeen"`
-	EstArrivalAirport          *string `json:"estArrivalAirport"`
-	Callsign                   *string `json:"callsign"`
-	EstDepartureAirportHoriz   int     `json:"estDepartureAirportHorizDistance"`
-	EstDepartureAirportVert    int     `json:"estDepartureAirportVertDistance"`
-	EstArrivalAirportHoriz     int     `json:"estArrivalAirportHorizDistance"`
-	EstArrivalAirportVert      int     `json:"estArrivalAirportVertDistance"`
-	DepartureAirportCandidates int     `json:"departureAirportCandidatesCount"`
-	ArrivalAirportCandidates   int     `json:"arrivalAirportCandidatesCount"`
-}
-
-// HistoricalFlightsResponse is what our API returns for arrival/departure queries
-type HistoricalFlightsResponse struct {
-	Airport string             `json:"airport"`
-	Type    string             `json:"type"` // "arrivals" or "departures"
-	Begin   int64              `json:"begin"`
-	End     int64              `json:"end"`
-	Count   int                `json:"count"`
-	Flights []HistoricalFlight `json:"flights"`
-}
-
 // BoundingBox represents a geographic rectangle for area queries
 type BoundingBox struct {
 	LatMin float64 // Southern boundary
 	LatMax float64 // Northern boundary
 	LonMin float64 // Western boundary
 	LonMax float64 // Eastern boundary
-}
-
-// TokenResponse represents the OAuth2 token response from OpenSky
-type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int    `json:"expires_in"`
-	TokenType   string `json:"token_type"`
 }
 
 // FilterParams holds the optional query parameters for filtering flights

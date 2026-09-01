@@ -20,19 +20,6 @@ func main() {
 		fmt.Println("No .env file found - using system environment variables")
 	}
 
-	// Load OpenSky OAuth2 credentials and fetch access token
-	openSkyClientID = os.Getenv("OPENSKY_CLIENT_ID")
-	openSkyClientSecret = os.Getenv("OPENSKY_CLIENT_SECRET")
-
-	if openSkyClientID != "" && openSkyClientSecret != "" {
-		if err := fetchAccessToken(); err != nil {
-			fmt.Printf("⚠️  Failed to get OpenSky access token: %v\n", err)
-			fmt.Println("   Arrivals/departures endpoints won't work")
-		}
-	} else {
-		fmt.Println("⚠️  OpenSky credentials not set - arrivals/departures endpoints won't work")
-	}
-
 	// Load airports database
 	if err := loadAirports("data/airports.csv"); err != nil {
 		fmt.Printf("Warning: failed to load airports: %v\n", err)
@@ -40,10 +27,9 @@ func main() {
 		fmt.Printf("✅ Loaded %d airports (%d medium/large)\n", getAirportCount(), getMediumLargeAirportCount())
 	}
 
-	// Start cache cleanup routines (background goroutines)
+	// Start cache cleanup routine (background goroutine)
 	flightCache.StartCleanupRoutine(1 * time.Minute)
-	historicalCache.StartCleanupRoutine(5 * time.Minute)
-	fmt.Println("✅ Cache cleanup routines started")
+	fmt.Println("✅ Cache cleanup routine started")
 
 	// Create router
 	router := gin.Default()
@@ -68,10 +54,6 @@ func main() {
 				"entries": flightCache.Size(),
 				"ttl":     FlightCacheTTL.String(),
 			},
-			"historicalCache": gin.H{
-				"entries": historicalCache.Size(),
-				"ttl":     HistoricalCacheTTL.String(),
-			},
 		})
 	})
 
@@ -82,13 +64,8 @@ func main() {
 	router.GET("/flights/:icao", getFlightByICAO)
 
 	// Airport endpoints
-	router.GET("/airports", searchAirportsHandler)          // Search/autocomplete
-	router.GET("/airports/:icao", getAirportByICAO)         // Get airport details by ICAO
-	router.GET("/airports/:icao/arrivals", getArrivals)     // Historical arrivals
-	router.GET("/airports/:icao/departures", getDepartures) // Historical departures
-
-	// Debug endpoint for OpenSky connectivity
-	router.GET("/debug/opensky", debugOpenSky)
+	router.GET("/airports", searchAirportsHandler)  // Search/autocomplete
+	router.GET("/airports/:icao", getAirportByICAO) // Get airport details by ICAO
 
 	// Start server
 	port := os.Getenv("PORT")

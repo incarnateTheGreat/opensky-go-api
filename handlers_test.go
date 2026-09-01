@@ -76,10 +76,6 @@ func TestCacheStatsHandler(t *testing.T) {
 				"entries": flightCache.Size(),
 				"ttl":     FlightCacheTTL.String(),
 			},
-			"historicalCache": gin.H{
-				"entries": historicalCache.Size(),
-				"ttl":     HistoricalCacheTTL.String(),
-			},
 		})
 	})
 
@@ -98,12 +94,9 @@ func TestCacheStatsHandler(t *testing.T) {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 
-	// Verify both cache stats are present
+	// Verify cache stats are present
 	if _, ok := response["flightCache"]; !ok {
 		t.Error("response missing flightCache")
-	}
-	if _, ok := response["historicalCache"]; !ok {
-		t.Error("response missing historicalCache")
 	}
 }
 
@@ -300,63 +293,6 @@ func TestGetFlightsByAirport_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-// TestParseTimeRange tests the time range parsing helper
-func TestParseTimeRange(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	tests := []struct {
-		name          string
-		begin         string
-		end           string
-		expectDefault bool
-	}{
-		{"no params uses defaults", "", "", true},
-		// Use timestamps within 7-day range (current time - 1 hour to current time)
-		{"custom begin and end", "1724000000", "1724001000", false},
-		{"invalid begin uses default", "invalid", "2000000", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create test context with query params
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-
-			url := "/test"
-			if tt.begin != "" || tt.end != "" {
-				url += "?"
-				if tt.begin != "" {
-					url += "begin=" + tt.begin
-				}
-				if tt.end != "" {
-					if tt.begin != "" {
-						url += "&"
-					}
-					url += "end=" + tt.end
-				}
-			}
-			c.Request = httptest.NewRequest("GET", url, nil)
-
-			begin, end := parseTimeRange(c)
-
-			// Verify begin < end
-			if begin >= end {
-				t.Errorf("begin (%d) should be less than end (%d)", begin, end)
-			}
-
-			// If custom values provided, verify they're used
-			if !tt.expectDefault && tt.begin == "1724000000" && tt.end == "1724001000" {
-				if begin != 1724000000 {
-					t.Errorf("expected begin 1724000000, got %d", begin)
-				}
-				if end != 1724001000 {
-					t.Errorf("expected end 1724001000, got %d", end)
-				}
-			}
-		})
 	}
 }
 
