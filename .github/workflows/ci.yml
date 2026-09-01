@@ -1,0 +1,74 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version: "1.26"
+                  cache: true
+
+            - name: Download dependencies
+              run: go mod download
+
+            - name: Run go vet
+              run: go vet ./...
+
+            - name: Run tests
+              run: go test -v -race -coverprofile=coverage.out ./...
+
+            - name: Check coverage
+              run: |
+                  go tool cover -func=coverage.out | tail -1
+                  COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
+                  echo "Total coverage: $COVERAGE%"
+
+    lint:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version: "1.26"
+                  cache: true
+
+            - name: Run golangci-lint
+              uses: golangci/golangci-lint-action@v6
+              with:
+                  version: latest
+
+    build:
+        runs-on: ubuntu-latest
+        needs: [test, lint]
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version: "1.26"
+                  cache: true
+
+            - name: Build
+              run: go build -o opensky-go-api .
+
+            - name: Verify binary exists
+              run: ls -la opensky-go-api
