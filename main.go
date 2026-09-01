@@ -31,11 +31,11 @@ func main() {
 		fmt.Println("⚠️  OpenSky credentials not set - arrivals/departures endpoints won't work")
 	}
 
-	// Load cities database
-	if err := loadCities("data/worldcities.csv"); err != nil {
-		fmt.Printf("Warning: failed to load cities: %v\n", err)
+	// Load airports database
+	if err := loadAirports("data/airports.csv"); err != nil {
+		fmt.Printf("Warning: failed to load airports: %v\n", err)
 	} else {
-		fmt.Printf("✅ Loaded %d cities\n", getCityCount())
+		fmt.Printf("✅ Loaded %d airports (%d medium/large)\n", getAirportCount(), getMediumLargeAirportCount())
 	}
 
 	// Create router
@@ -52,12 +52,14 @@ func main() {
 	// Flight endpoints (real-time)
 	router.GET("/flights", getFlights)
 	router.GET("/flights/area", getFlightsByArea)
-	router.GET("/flights/city/:name", getFlightsByCity)
+	router.GET("/flights/airport/:icao", getFlightsByAirport) // Flights around airport
 	router.GET("/flights/:icao", getFlightByICAO)
 
-	// Airport arrivals/departures (historical, requires auth)
-	router.GET("/airports/:icao/arrivals", getArrivals)
-	router.GET("/airports/:icao/departures", getDepartures)
+	// Airport endpoints
+	router.GET("/airports", searchAirportsHandler)          // Search/autocomplete
+	router.GET("/airports/:icao", getAirportByICAO)         // Get airport details by ICAO
+	router.GET("/airports/:icao/arrivals", getArrivals)     // Historical arrivals
+	router.GET("/airports/:icao/departures", getDepartures) // Historical departures
 
 	// Start server
 	port := os.Getenv("PORT")

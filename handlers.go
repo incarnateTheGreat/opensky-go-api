@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -140,19 +141,72 @@ func getFlightsByArea(c *gin.Context) {
 	})
 }
 
-// getFlightsByCity handles GET /flights/city/:name
-func getFlightsByCity(c *gin.Context) {
-	name := c.Param("name")
-
-	city, found := lookupCity(name)
-	if !found {
-		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("city not found: %s", name),
-			"hint":  "try a major city name like 'toronto', 'london', 'tokyo'",
+// searchAirportsHandler handles GET /airports?q=...
+// Autocomplete search for airports by ICAO, IATA, name, or city
+func searchAirportsHandler(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": "missing required query parameter 'q'",
+			"hint":  "example: /airports?q=toronto",
 		})
 		return
 	}
 
+	// Parse limit (default 10, max 50)
+	limit := 10
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 50 {
+			limit = l
+		}
+	}
+
+	airports := searchAirports(query, limit)
+
+	if len(airports) == 0 {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("no airports found for '%s'", query),
+			"hint":  "try searching by city name, airport name, or ICAO/IATA code",
+		})
+		return
+	}
+
+	results := make([]gin.H, len(airports))
+	for i, a := range airports {
+		results[i] = gin.H{
+			"icao":         a.ICAO,
+			"iata":         a.IATA,
+			"name":         a.Name,
+			"municipality": a.Municipality,
+			"country":      a.Country,
+			"lat":          a.Lat,
+			"lng":          a.Lng,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"query":   query,
+		"count":   len(airports),
+		"results": results,
+	})
+}
+
+// getFlightsByAirport handles GET /flights/airport/:icao
+// Returns real-time flights in bounding box around an airport
+// Optional query param: ?radius=0.5 (degrees, default 0.3)
+func getFlightsByAirport(c *gin.Context) {
+	icao := strings.ToUpper(c.Param("icao"))
+
+	airport, found := lookupAirport(icao)
+	if !found {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("airport not found: %s", icao),
+			"hint":  "use 4-letter ICAO code (e.g., KJFK, EGLL, CYYZ)",
+		})
+		return
+	}
+
+	// Parse radius (default 0.3 degrees ≈ 33km)
 	radius := 0.3
 	if radiusStr := c.Query("radius"); radiusStr != "" {
 		if r, err := strconv.ParseFloat(radiusStr, 64); err == nil && r > 0 && r < 5 {
@@ -160,7 +214,7 @@ func getFlightsByCity(c *gin.Context) {
 		}
 	}
 
-	bbox := cityToBoundingBox(city, radius)
+	bbox := airportToBoundingBox(airport, radius)
 
 	flights, timestamp, err := fetchFlightsByArea(bbox)
 	if err != nil {
@@ -169,12 +223,15 @@ func getFlightsByCity(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"city": gin.H{
-			"name":    city.Display,
-			"country": city.Country,
-			"lat":     city.Lat,
-			"lng":     city.Lng,
-			"radius":  radius,
+		"airport": gin.H{
+			"icao":         airport.ICAO,
+			"iata":         airport.IATA,
+			"name":         airport.Name,
+			"municipality": airport.Municipality,
+			"country":      airport.Country,
+			"lat":          airport.Lat,
+			"lng":          airport.Lng,
+			"radius":       radius,
 		},
 		"bbox": gin.H{
 			"lamin": bbox.LatMin,
@@ -185,6 +242,35 @@ func getFlightsByCity(c *gin.Context) {
 		"time":    timestamp,
 		"count":   len(flights),
 		"flights": flights,
+	})
+}
+
+// getAirportByICAO handles GET /airports/:icao
+// Returns details for a specific airport by ICAO code
+func getAirportByICAO(c *gin.Context) {
+	icao := strings.ToUpper(c.Param("icao"))
+
+	airport, found := lookupAirport(icao)
+	if !found {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("airport not found: %s", icao),
+			"hint":  "use 4-letter ICAO code (e.g., KJFK, EGLL, CYYZ)",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"icao":         airport.ICAO,
+		"iata":         airport.IATA,
+		"name":         airport.Name,
+		"type":         airport.Type,
+		"municipality": airport.Municipality,
+		"country":      airport.Country,
+		"region":       airport.Region,
+		"lat":          airport.Lat,
+		"lng":          airport.Lng,
+		"arrivals":     fmt.Sprintf("/airports/%s/arrivals", airport.ICAO),
+		"departures":   fmt.Sprintf("/airports/%s/departures", airport.ICAO),
 	})
 }
 
