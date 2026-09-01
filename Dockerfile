@@ -16,8 +16,9 @@ FROM alpine:latest
 
 WORKDIR /app
 
-# Copy binary from builder
+# Copy binary and data files from builder
 COPY --from=builder /app/server .
+COPY --from=builder /app/data ./data
 
 # Railway sets PORT env var
 EXPOSE 8080
