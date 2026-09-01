@@ -23,6 +23,8 @@ func main() {
 	// Load OpenSky OAuth2 credentials and fetch access token
 	openSkyClientID = os.Getenv("OPENSKY_CLIENT_ID")
 	openSkyClientSecret = os.Getenv("OPENSKY_CLIENT_SECRET")
+	fmt.Printf("🔑 OPENSKY_CLIENT_ID set: %v (len=%d)\n", openSkyClientID != "", len(openSkyClientID))
+	fmt.Printf("🔑 OPENSKY_CLIENT_SECRET set: %v (len=%d)\n", openSkyClientSecret != "", len(openSkyClientSecret))
 	if openSkyClientID != "" && openSkyClientSecret != "" {
 		if err := fetchAccessToken(); err != nil {
 			fmt.Printf("⚠️  Failed to get OpenSky access token: %v\n", err)
