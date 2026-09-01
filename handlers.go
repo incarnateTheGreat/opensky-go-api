@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -345,4 +346,63 @@ func parseTimeRange(c *gin.Context) (begin, end int64) {
 	}
 
 	return begin, end
+}
+
+func debugOpenSky(c *gin.Context) {
+	results := gin.H{
+		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		"credentialsSet": openSkyClientID != "" && openSkyClientSecret != "",
+		"hasAccessToken": openSkyAccessToken != "",
+	}
+
+	// Test DNS resolution
+	addrs, dnsErr := net.LookupHost("auth.opensky-network.org")
+	if dnsErr != nil {
+		results["dnsResolution"] = gin.H{"error": dnsErr.Error()}
+	} else {
+		results["dnsResolution"] = gin.H{"addresses": addrs}
+	}
+
+	// Test TCP connection
+	conn, tcpErr := net.DialTimeout("tcp", "auth.opensky-network.org:443", 10*time.Second)
+	if tcpErr != nil {
+		results["tcpConnection"] = gin.H{"error": tcpErr.Error()}
+	} else {
+		conn.Close()
+		results["tcpConnection"] = gin.H{"status": "success"}
+	}
+
+	// Test HTTPS request (just HEAD, no auth)
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	req, _ := http.NewRequest("HEAD", "https://auth.opensky-network.org", nil)
+	httpStart := time.Now()
+	resp, httpErr := httpClient.Do(req)
+	httpDuration := time.Since(httpStart)
+	if httpErr != nil {
+		results["httpsRequest"] = gin.H{"error": httpErr.Error(), "duration": httpDuration.String()}
+	} else {
+		resp.Body.Close()
+		results["httpsRequest"] = gin.H{"status": resp.StatusCode, "duration": httpDuration.String()}
+	}
+
+	// Test token fetch if credentials are set
+	if openSkyClientID != "" && openSkyClientSecret != "" {
+		tokenStart := time.Now()
+		data := fmt.Sprintf("grant_type=client_credentials&client_id=%s&client_secret=%s",
+			openSkyClientID, openSkyClientSecret)
+		req, _ := http.NewRequest("POST",
+			"https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
+			strings.NewReader(data))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, tokenErr := httpClient.Do(req)
+		tokenDuration := time.Since(tokenStart)
+		if tokenErr != nil {
+			results["tokenFetch"] = gin.H{"error": tokenErr.Error(), "duration": tokenDuration.String()}
+		} else {
+			resp.Body.Close()
+			results["tokenFetch"] = gin.H{"status": resp.StatusCode, "duration": tokenDuration.String()}
+		}
+	}
+
+	c.JSON(http.StatusOK, results)
 }

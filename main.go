@@ -87,6 +87,9 @@ func main() {
 	router.GET("/airports/:icao/arrivals", getArrivals)     // Historical arrivals
 	router.GET("/airports/:icao/departures", getDepartures) // Historical departures
 
+	// Debug endpoint for OpenSky connectivity
+	router.GET("/debug/opensky", debugOpenSky)
+
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
