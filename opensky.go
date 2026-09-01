@@ -19,6 +19,10 @@ var (
 	openSkyAccessToken  string // Cached access token
 )
 
+// openSkyBaseURL is the base URL for OpenSky API
+// This can be overridden in tests to point to a mock server
+var openSkyBaseURL = "https://opensky-network.org"
+
 // fetchAccessToken exchanges client credentials for an access token
 // This implements OAuth2 Client Credentials flow
 func fetchAccessToken() error {
@@ -76,7 +80,7 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 	}
 
 	// Cache miss - fetch from API
-	url := "https://opensky-network.org/api/states/all"
+	url := openSkyBaseURL + "/api/states/all"
 	if icao24 != "" {
 		url = fmt.Sprintf("%s?icao24=%s", url, icao24)
 	}
@@ -107,8 +111,8 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 
 	// Cache miss - fetch from API
 	url := fmt.Sprintf(
-		"https://opensky-network.org/api/states/all?lamin=%f&lamax=%f&lomin=%f&lomax=%f",
-		bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax,
+		"%s/api/states/all?lamin=%f&lamax=%f&lomin=%f&lomax=%f",
+		openSkyBaseURL, bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax,
 	)
 
 	flights, timestamp, err := doFetch(url)
@@ -164,8 +168,8 @@ func fetchArrivals(airport string, begin, end int64) ([]HistoricalFlight, error)
 
 	// Cache miss - fetch from API
 	url := fmt.Sprintf(
-		"https://opensky-network.org/api/flights/arrival?airport=%s&begin=%d&end=%d",
-		airport, begin, end,
+		"%s/api/flights/arrival?airport=%s&begin=%d&end=%d",
+		openSkyBaseURL, airport, begin, end,
 	)
 
 	flights, err := doFetchHistorical(url)
@@ -192,8 +196,8 @@ func fetchDepartures(airport string, begin, end int64) ([]HistoricalFlight, erro
 
 	// Cache miss - fetch from API
 	url := fmt.Sprintf(
-		"https://opensky-network.org/api/flights/departure?airport=%s&begin=%d&end=%d",
-		airport, begin, end,
+		"%s/api/flights/departure?airport=%s&begin=%d&end=%d",
+		openSkyBaseURL, airport, begin, end,
 	)
 
 	flights, err := doFetchHistorical(url)
