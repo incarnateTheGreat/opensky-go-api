@@ -61,21 +61,71 @@ func fetchAccessToken() error {
 }
 
 // fetchFlights calls the OpenSky Network API and returns parsed flights
+// Uses cache to avoid hitting the API too frequently
 func fetchFlights(icao24 string) ([]Flight, int64, error) {
+	// Build cache key
+	cacheKey := "flights:all"
+	if icao24 != "" {
+		cacheKey = fmt.Sprintf("flights:icao24:%s", icao24)
+	}
+
+	// Check cache first
+	if cached, found := flightCache.Get(cacheKey); found {
+		result := cached.(cachedFlightResult)
+		return result.Flights, result.Timestamp, nil
+	}
+
+	// Cache miss - fetch from API
 	url := "https://opensky-network.org/api/states/all"
 	if icao24 != "" {
 		url = fmt.Sprintf("%s?icao24=%s", url, icao24)
 	}
-	return doFetch(url)
+
+	flights, timestamp, err := doFetch(url)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Store in cache
+	flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
+
+	return flights, timestamp, nil
 }
 
 // fetchFlightsByArea calls OpenSky with bounding box parameters
+// Uses cache to avoid hitting the API too frequently
 func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
+	// Build cache key from bounding box (rounded to reduce key variations)
+	cacheKey := fmt.Sprintf("flights:area:%.2f:%.2f:%.2f:%.2f",
+		bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax)
+
+	// Check cache first
+	if cached, found := flightCache.Get(cacheKey); found {
+		result := cached.(cachedFlightResult)
+		return result.Flights, result.Timestamp, nil
+	}
+
+	// Cache miss - fetch from API
 	url := fmt.Sprintf(
 		"https://opensky-network.org/api/states/all?lamin=%f&lamax=%f&lomin=%f&lomax=%f",
 		bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax,
 	)
-	return doFetch(url)
+
+	flights, timestamp, err := doFetch(url)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Store in cache
+	flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
+
+	return flights, timestamp, nil
+}
+
+// cachedFlightResult holds flight data for caching
+type cachedFlightResult struct {
+	Flights   []Flight
+	Timestamp int64
 }
 
 // doFetch handles the HTTP request and parsing for real-time endpoints
@@ -102,21 +152,59 @@ func doFetch(url string) ([]Flight, int64, error) {
 }
 
 // fetchArrivals gets flights that arrived at a specific airport
+// Uses cache since historical data doesn't change
 func fetchArrivals(airport string, begin, end int64) ([]HistoricalFlight, error) {
+	// Build cache key
+	cacheKey := fmt.Sprintf("arrivals:%s:%d:%d", airport, begin, end)
+
+	// Check cache first
+	if cached, found := historicalCache.Get(cacheKey); found {
+		return cached.([]HistoricalFlight), nil
+	}
+
+	// Cache miss - fetch from API
 	url := fmt.Sprintf(
 		"https://opensky-network.org/api/flights/arrival?airport=%s&begin=%d&end=%d",
 		airport, begin, end,
 	)
-	return doFetchHistorical(url)
+
+	flights, err := doFetchHistorical(url)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	historicalCache.Set(cacheKey, flights, HistoricalCacheTTL)
+
+	return flights, nil
 }
 
 // fetchDepartures gets flights that departed from a specific airport
+// Uses cache since historical data doesn't change
 func fetchDepartures(airport string, begin, end int64) ([]HistoricalFlight, error) {
+	// Build cache key
+	cacheKey := fmt.Sprintf("departures:%s:%d:%d", airport, begin, end)
+
+	// Check cache first
+	if cached, found := historicalCache.Get(cacheKey); found {
+		return cached.([]HistoricalFlight), nil
+	}
+
+	// Cache miss - fetch from API
 	url := fmt.Sprintf(
 		"https://opensky-network.org/api/flights/departure?airport=%s&begin=%d&end=%d",
 		airport, begin, end,
 	)
-	return doFetchHistorical(url)
+
+	flights, err := doFetchHistorical(url)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	historicalCache.Set(cacheKey, flights, HistoricalCacheTTL)
+
+	return flights, nil
 }
 
 // doFetchHistorical handles authenticated requests to historical endpoints

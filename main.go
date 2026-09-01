@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -38,6 +39,11 @@ func main() {
 		fmt.Printf("✅ Loaded %d airports (%d medium/large)\n", getAirportCount(), getMediumLargeAirportCount())
 	}
 
+	// Start cache cleanup routines (background goroutines)
+	flightCache.StartCleanupRoutine(1 * time.Minute)
+	historicalCache.StartCleanupRoutine(5 * time.Minute)
+	fmt.Println("✅ Cache cleanup routines started")
+
 	// Create router
 	router := gin.Default()
 
@@ -46,6 +52,20 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
 			"status":  "healthy",
+		})
+	})
+
+	// Cache stats (for debugging)
+	router.GET("/cache/stats", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"flightCache": gin.H{
+				"entries": flightCache.Size(),
+				"ttl":     FlightCacheTTL.String(),
+			},
+			"historicalCache": gin.H{
+				"entries": historicalCache.Size(),
+				"ttl":     HistoricalCacheTTL.String(),
+			},
 		})
 	})
 
