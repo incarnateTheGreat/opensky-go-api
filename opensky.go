@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -27,6 +28,12 @@ var openSkyClient *http.Client
 // openSkyAPIKey is an optional key for authenticated proxy requests
 var openSkyAPIKey string
 
+// openSkyRequestTimeout controls upstream HTTP timeout per attempt.
+var openSkyRequestTimeout = 12 * time.Second
+
+// openSkyMaxAttempts controls retries per upstream.
+var openSkyMaxAttempts = 2
+
 func init() {
 	// Allow overriding the base URL (for Cloudflare Worker proxy)
 	if baseURL := os.Getenv("OPENSKY_BASE_URL"); baseURL != "" {
@@ -42,8 +49,20 @@ func init() {
 	// Optional API key for proxy authentication
 	openSkyAPIKey = os.Getenv("OPENSKY_API_KEY")
 
+	if timeoutSeconds := os.Getenv("OPENSKY_TIMEOUT_SECONDS"); timeoutSeconds != "" {
+		if seconds, err := strconv.Atoi(timeoutSeconds); err == nil && seconds >= 3 && seconds <= 60 {
+			openSkyRequestTimeout = time.Duration(seconds) * time.Second
+		}
+	}
+
+	if attemptsValue := os.Getenv("OPENSKY_MAX_ATTEMPTS"); attemptsValue != "" {
+		if attempts, err := strconv.Atoi(attemptsValue); err == nil && attempts >= 1 && attempts <= 5 {
+			openSkyMaxAttempts = attempts
+		}
+	}
+
 	openSkyClient = &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: openSkyRequestTimeout,
 	}
 }
 
@@ -77,7 +96,7 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 
 		if fallbackURL != url {
 			if shouldFailover(err) {
-				flights, timestamp, fallbackErr := doFetch(fallbackURL)
+				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
 				if fallbackErr == nil {
 					flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
 					return flights, timestamp, nil
@@ -123,7 +142,7 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 
 		if fallbackURL != url {
 			if shouldFailover(err) {
-				flights, timestamp, fallbackErr := doFetch(fallbackURL)
+				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
 				if fallbackErr == nil {
 					flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
 					return flights, timestamp, nil
@@ -149,7 +168,13 @@ type cachedFlightResult struct {
 
 // doFetch handles the HTTP request and parsing for real-time endpoints
 func doFetch(targetURL string) ([]Flight, int64, error) {
-	const maxAttempts = 3
+	return doFetchWithAttempts(targetURL, openSkyMaxAttempts)
+}
+
+func doFetchWithAttempts(targetURL string, maxAttempts int) ([]Flight, int64, error) {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		req, err := http.NewRequest("GET", targetURL, nil)
