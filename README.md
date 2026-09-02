@@ -60,8 +60,15 @@ Create a `.env` file to override defaults:
 # Override the OpenSky API base URL (e.g., point to a Cloudflare Worker proxy)
 OPENSKY_BASE_URL=https://your-worker.workers.dev
 
+# Optional fallback when worker upstream fails
+OPENSKY_FALLBACK_BASE_URL=https://opensky-network.org
+
 # API key for proxy authentication
 OPENSKY_API_KEY=your_key
+
+# Upstream request tuning (per attempt)
+OPENSKY_TIMEOUT_SECONDS=10
+OPENSKY_MAX_ATTEMPTS=2
 
 # Comma-separated list of allowed frontend origins for browser requests
 # Example: http://localhost:5173,https://your-app.pages.dev
@@ -70,6 +77,35 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173
 # Set to "production" in Railway to disable debug endpoints
 APP_ENV=development
 ```
+
+### Cloudflare Worker Notes
+
+- `GET /` and `GET /health` on the worker return local health JSON.
+- API calls are proxied to OpenSky (for example, `/api/states/all?...`).
+- If your worker is configured with `API_KEY`, set matching `OPENSKY_API_KEY` in Railway.
+- Use worker URL without trailing slash in Railway:
+  - `OPENSKY_BASE_URL=https://your-worker.workers.dev`
+
+### Troubleshoot 522 Errors
+
+`522` means the worker is reachable but its upstream request to OpenSky timed out.
+
+```bash
+# Worker health (should be 200)
+curl -i "https://your-worker.workers.dev/health"
+
+# Worker root (should also be 200)
+curl -i "https://your-worker.workers.dev/"
+
+# Proxied OpenSky request (this is where 522 may appear)
+curl -i "https://your-worker.workers.dev/api/states/all?lamin=43&lamax=44&lomin=-80&lomax=-78"
+```
+
+If health is `200` but proxy calls are `522`:
+
+- Keep `OPENSKY_FALLBACK_BASE_URL=https://opensky-network.org` enabled.
+- Lower timeout/attempts to fail fast and avoid long hangs.
+- Retry with a smaller area query to reduce upstream load.
 
 ### Verify CORS Manually
 

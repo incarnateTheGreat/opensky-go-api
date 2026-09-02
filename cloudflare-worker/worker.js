@@ -8,10 +8,10 @@
  * 1. Go to https://dash.cloudflare.com/ → Workers & Pages → Create Worker
  * 2. Paste this code and deploy
  * 3. (Optional) Add API_KEY secret in Settings → Variables for security
- * 4. Set OPENSKY_PROXY in Railway to your worker URL
+ * 4. Set OPENSKY_BASE_URL in Railway to your worker URL
  * 
  * Usage from Railway:
- *   OPENSKY_PROXY=https://your-worker.your-subdomain.workers.dev
+ *   OPENSKY_BASE_URL=https://your-worker.your-subdomain.workers.dev
  */
 
 export default {
@@ -27,8 +27,10 @@ export default {
 
     const url = new URL(request.url);
     
-    // Health check endpoint
-    if (url.pathname === '/health') {
+    // Health check endpoints
+    // Support both / and /health so opening the worker URL in a browser
+    // doesn't proxy to OpenSky root and produce confusing 522 errors.
+    if (url.pathname === '/' || url.pathname === '/health') {
       return new Response(JSON.stringify({ status: 'ok', proxy: 'cloudflare-worker' }), {
         headers: { 'Content-Type': 'application/json' }
       });
@@ -55,10 +57,15 @@ export default {
           'Content-Type': response.headers.get('Content-Type') || 'application/json',
           'Access-Control-Allow-Origin': '*',
           'X-Proxied-By': 'cloudflare-worker',
+          'X-Upstream-Status': String(response.status),
         },
       });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
+      return new Response(JSON.stringify({
+        error: error.message,
+        proxy: 'cloudflare-worker',
+        upstream: openSkyUrl,
+      }), {
         status: 502,
         headers: { 'Content-Type': 'application/json' },
       });
