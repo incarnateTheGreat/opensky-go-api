@@ -40,6 +40,7 @@ func getCacheStats(c *gin.Context) {
 			"entries": flightCache.Size(),
 			"ttl":     FlightCacheTTL.String(),
 		},
+		"upstream": getOpenSkyFailoverStats(),
 	})
 }
 

@@ -37,6 +37,8 @@ Built with Go and [Gin](https://github.com/gin-gonic/gin).
 | GET    | `/cache/stats` | Cache statistics                      |
 | GET    | `/debug/cors`  | CORS debug info (non-production only) |
 
+`/cache/stats` now also includes upstream failover diagnostics (`upstream`) with counters and last-event details, including `lastRequestId` to correlate an API error with the most recent failover event.
+
 ## Run Locally
 
 ```bash
@@ -57,11 +59,11 @@ curl "http://localhost:8080/flights/area?lamin=40&lamax=42&lomin=-75&lomax=-73"
 Create a `.env` file to override defaults:
 
 ```env
-# Override the OpenSky API base URL (e.g., point to a Cloudflare Worker proxy)
-OPENSKY_BASE_URL=https://your-worker.workers.dev
+# Primary upstream (recommended)
+OPENSKY_BASE_URL=https://opensky-network.org
 
-# Optional fallback when worker upstream fails
-OPENSKY_FALLBACK_BASE_URL=https://opensky-network.org
+# Optional fallback (for example, Cloudflare Worker)
+OPENSKY_FALLBACK_BASE_URL=https://your-worker.workers.dev
 
 # API key for proxy authentication
 OPENSKY_API_KEY=your_key
@@ -83,8 +85,8 @@ APP_ENV=development
 - `GET /` and `GET /health` on the worker return local health JSON.
 - API calls are proxied to OpenSky (for example, `/api/states/all?...`).
 - If your worker is configured with `API_KEY`, set matching `OPENSKY_API_KEY` in Railway.
-- Use worker URL without trailing slash in Railway:
-  - `OPENSKY_BASE_URL=https://your-worker.workers.dev`
+- Use worker URL without trailing slash in Railway when setting fallback:
+  - `OPENSKY_FALLBACK_BASE_URL=https://your-worker.workers.dev`
 
 ### Troubleshoot 522 Errors
 
@@ -103,7 +105,7 @@ curl -i "https://your-worker.workers.dev/api/states/all?lamin=43&lamax=44&lomin=
 
 If health is `200` but proxy calls are `522`:
 
-- Keep `OPENSKY_FALLBACK_BASE_URL=https://opensky-network.org` enabled.
+- Prefer direct OpenSky as primary and worker as fallback.
 - Lower timeout/attempts to fail fast and avoid long hangs.
 - Retry with a smaller area query to reduce upstream load.
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -297,5 +298,103 @@ func TestCachePreventsDuplicateRequests(t *testing.T) {
 	_, _, _ = fetchFlights("")
 	if requestCount != 2 {
 		t.Errorf("expected 2 requests after cache clear, got %d", requestCount)
+	}
+}
+
+func TestFetchFlights_FallbackDiagnosticsStatusFailover(t *testing.T) {
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer primaryServer.Close()
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := OpenSkyResponse{Time: 1234567890, States: [][]interface{}{}}
+		mustEncodeJSON(t, w, response)
+	}))
+	defer fallbackServer.Close()
+
+	originalBaseURL := openSkyBaseURL
+	originalFallbackBaseURL := openSkyFallbackBaseURL
+	defer func() {
+		openSkyBaseURL = originalBaseURL
+		openSkyFallbackBaseURL = originalFallbackBaseURL
+	}()
+
+	openSkyBaseURL = primaryServer.URL
+	openSkyFallbackBaseURL = fallbackServer.URL
+	flightCache.Clear()
+	resetOpenSkyFailoverStats()
+
+	_, _, err := fetchFlights("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	stats := getOpenSkyFailoverStats()
+	if stats.FailoverAttempts != 1 {
+		t.Fatalf("expected failoverAttempts=1, got %d", stats.FailoverAttempts)
+	}
+	if stats.FailoverSuccess != 1 {
+		t.Fatalf("expected failoverSuccess=1, got %d", stats.FailoverSuccess)
+	}
+	if stats.LastRequestID == "" {
+		t.Fatal("expected lastRequestId to be populated")
+	}
+	if stats.LastReason != "upstream_status_503" {
+		t.Fatalf("expected lastReason=upstream_status_503, got %s", stats.LastReason)
+	}
+}
+
+func TestFetchFlights_FallbackDiagnosticsCombinedError(t *testing.T) {
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer primaryServer.Close()
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer fallbackServer.Close()
+
+	originalBaseURL := openSkyBaseURL
+	originalFallbackBaseURL := openSkyFallbackBaseURL
+	defer func() {
+		openSkyBaseURL = originalBaseURL
+		openSkyFallbackBaseURL = originalFallbackBaseURL
+	}()
+
+	openSkyBaseURL = primaryServer.URL
+	openSkyFallbackBaseURL = fallbackServer.URL
+	flightCache.Clear()
+	resetOpenSkyFailoverStats()
+
+	_, _, err := fetchFlights("")
+	if err == nil {
+		t.Fatal("expected error when primary and fallback both fail")
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "primary upstream failed") {
+		t.Fatalf("expected combined error to include primary failure, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "fallback failed") {
+		t.Fatalf("expected combined error to include fallback failure, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "request_id=") {
+		t.Fatalf("expected combined error to include request_id, got: %s", errMsg)
+	}
+
+	stats := getOpenSkyFailoverStats()
+	if stats.FailoverAttempts != 1 {
+		t.Fatalf("expected failoverAttempts=1, got %d", stats.FailoverAttempts)
+	}
+	if stats.FailoverFailures != 1 {
+		t.Fatalf("expected failoverFailures=1, got %d", stats.FailoverFailures)
+	}
+	if stats.LastRequestID == "" {
+		t.Fatal("expected lastRequestId to be populated")
+	}
+	if stats.LastFallbackError == "" {
+		t.Fatal("expected lastFallbackError to be populated")
 	}
 }

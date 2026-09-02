@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,11 +20,12 @@ import (
 // =============================================================================
 
 // openSkyBaseURL is the base URL for OpenSky API
-// Can be overridden via OPENSKY_BASE_URL env var (e.g., for Cloudflare Worker proxy)
+// Can be overridden via OPENSKY_BASE_URL env var.
+// Recommended production primary: https://opensky-network.org
 var openSkyBaseURL = "https://opensky-network.org"
 
 // openSkyFallbackBaseURL is an optional secondary upstream used when the primary fails.
-// Example: primary=Cloudflare Worker URL, fallback=https://opensky-network.org
+// Example: primary=https://opensky-network.org, fallback=Cloudflare Worker URL
 var openSkyFallbackBaseURL string
 
 // openSkyClient is a shared HTTP client for OpenSky requests
@@ -35,8 +40,11 @@ var openSkyRequestTimeout = 12 * time.Second
 // openSkyMaxAttempts controls retries per upstream.
 var openSkyMaxAttempts = 2
 
+var openSkyFailoverDiagnostics = newFailoverDiagnostics()
+var failoverRequestIDCounter uint64
+
 func init() {
-	// Allow overriding the base URL (for Cloudflare Worker proxy)
+	// Allow overriding the primary base URL.
 	if baseURL := os.Getenv("OPENSKY_BASE_URL"); baseURL != "" {
 		openSkyBaseURL = strings.TrimRight(baseURL, "/")
 		fmt.Printf("✅ OpenSky base URL: %s\n", openSkyBaseURL)
@@ -102,14 +110,31 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 			fallbackURL = fmt.Sprintf("%s?icao24=%s", fallbackURL, icao24)
 		}
 
+		requestID := newFailoverRequestID()
+
 		if fallbackURL != url {
+			reason := classifyFailoverReason(err)
 			if shouldFailover(err) {
+				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, err)
 				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
 				if fallbackErr == nil {
+					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL)
 					flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
 					return flights, timestamp, nil
 				}
+				openSkyFailoverDiagnostics.recordFailure(requestID, reason, url, fallbackURL, fallbackErr)
+				return nil, 0, failoverError{
+					RequestID:   requestID,
+					Reason:      reason,
+					PrimaryURL:  url,
+					FallbackURL: fallbackURL,
+					PrimaryErr:  err,
+					FallbackErr: fallbackErr,
+				}
 			}
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "non_retryable_primary_error", url, fallbackURL, err)
+		} else {
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "fallback_same_as_primary", url, fallbackURL, err)
 		}
 	}
 	if err != nil {
@@ -148,14 +173,31 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 			openSkyFallbackBaseURL, bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax,
 		)
 
+		requestID := newFailoverRequestID()
+
 		if fallbackURL != url {
+			reason := classifyFailoverReason(err)
 			if shouldFailover(err) {
+				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, err)
 				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
 				if fallbackErr == nil {
+					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL)
 					flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
 					return flights, timestamp, nil
 				}
+				openSkyFailoverDiagnostics.recordFailure(requestID, reason, url, fallbackURL, fallbackErr)
+				return nil, 0, failoverError{
+					RequestID:   requestID,
+					Reason:      reason,
+					PrimaryURL:  url,
+					FallbackURL: fallbackURL,
+					PrimaryErr:  err,
+					FallbackErr: fallbackErr,
+				}
 			}
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "non_retryable_primary_error", url, fallbackURL, err)
+		} else {
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "fallback_same_as_primary", url, fallbackURL, err)
 		}
 	}
 	if err != nil {
@@ -234,6 +276,25 @@ type upstreamStatusError struct {
 	Status int
 }
 
+type failoverError struct {
+	RequestID   string
+	Reason      string
+	PrimaryURL  string
+	FallbackURL string
+	PrimaryErr  error
+	FallbackErr error
+}
+
+func (e failoverError) Error() string {
+	return fmt.Sprintf(
+		"primary upstream failed (%s) [request_id=%s]: %v; fallback failed: %v",
+		e.Reason,
+		e.RequestID,
+		e.PrimaryErr,
+		e.FallbackErr,
+	)
+}
+
 func (e upstreamStatusError) Error() string {
 	return fmt.Sprintf("OpenSky returned status %d", e.Status)
 }
@@ -248,6 +309,31 @@ func shouldFailover(err error) bool {
 	return true
 }
 
+func classifyFailoverReason(err error) string {
+	var statusErr upstreamStatusError
+	if errors.As(err, &statusErr) {
+		return fmt.Sprintf("upstream_status_%d", statusErr.Status)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return "request_canceled"
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return "network_timeout"
+		}
+		return "network_error"
+	}
+
+	return "request_error"
+}
+
 func shouldRetryStatus(status int) bool {
 	switch status {
 	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 522, 523, 524:
@@ -255,6 +341,113 @@ func shouldRetryStatus(status int) bool {
 	default:
 		return false
 	}
+}
+
+type openSkyFailoverStats struct {
+	PrimaryFailures   uint64 `json:"primaryFailures"`
+	FailoverAttempts  uint64 `json:"failoverAttempts"`
+	FailoverSuccess   uint64 `json:"failoverSuccess"`
+	FailoverFailures  uint64 `json:"failoverFailures"`
+	FailoverSkipped   uint64 `json:"failoverSkipped"`
+	LastRequestID     string `json:"lastRequestId,omitempty"`
+	LastReason        string `json:"lastReason,omitempty"`
+	LastPrimaryURL    string `json:"lastPrimaryUrl,omitempty"`
+	LastFallbackURL   string `json:"lastFallbackUrl,omitempty"`
+	LastPrimaryError  string `json:"lastPrimaryError,omitempty"`
+	LastFallbackError string `json:"lastFallbackError,omitempty"`
+	LastUpdatedUTC    string `json:"lastUpdatedUtc,omitempty"`
+}
+
+type failoverDiagnostics struct {
+	mu    sync.Mutex
+	stats openSkyFailoverStats
+}
+
+func newFailoverDiagnostics() *failoverDiagnostics {
+	return &failoverDiagnostics{}
+}
+
+func newFailoverRequestID() string {
+	seq := atomic.AddUint64(&failoverRequestIDCounter, 1)
+	return fmt.Sprintf("fo-%d-%d", time.Now().UTC().UnixMilli(), seq)
+}
+
+func (d *failoverDiagnostics) recordAttempt(requestID, reason, primaryURL, fallbackURL string, primaryErr error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.stats.PrimaryFailures++
+	d.stats.FailoverAttempts++
+	d.stats.LastRequestID = requestID
+	d.stats.LastReason = reason
+	d.stats.LastPrimaryURL = primaryURL
+	d.stats.LastFallbackURL = fallbackURL
+	d.stats.LastPrimaryError = primaryErr.Error()
+	d.stats.LastFallbackError = ""
+	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
+}
+
+func (d *failoverDiagnostics) recordSuccess(requestID, reason, primaryURL, fallbackURL string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.stats.FailoverSuccess++
+	d.stats.LastRequestID = requestID
+	d.stats.LastReason = reason
+	d.stats.LastPrimaryURL = primaryURL
+	d.stats.LastFallbackURL = fallbackURL
+	d.stats.LastFallbackError = ""
+	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
+}
+
+func (d *failoverDiagnostics) recordFailure(requestID, reason, primaryURL, fallbackURL string, fallbackErr error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.stats.FailoverFailures++
+	d.stats.LastRequestID = requestID
+	d.stats.LastReason = reason
+	d.stats.LastPrimaryURL = primaryURL
+	d.stats.LastFallbackURL = fallbackURL
+	d.stats.LastFallbackError = fallbackErr.Error()
+	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
+}
+
+func (d *failoverDiagnostics) recordSkipped(requestID, reason, primaryURL, fallbackURL string, primaryErr error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.stats.PrimaryFailures++
+	d.stats.FailoverSkipped++
+	d.stats.LastRequestID = requestID
+	d.stats.LastReason = reason
+	d.stats.LastPrimaryURL = primaryURL
+	d.stats.LastFallbackURL = fallbackURL
+	d.stats.LastPrimaryError = primaryErr.Error()
+	d.stats.LastFallbackError = ""
+	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
+}
+
+func (d *failoverDiagnostics) snapshot() openSkyFailoverStats {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.stats
+}
+
+func (d *failoverDiagnostics) reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.stats = openSkyFailoverStats{}
+}
+
+func getOpenSkyFailoverStats() openSkyFailoverStats {
+	return openSkyFailoverDiagnostics.snapshot()
+}
+
+func resetOpenSkyFailoverStats() {
+	openSkyFailoverDiagnostics.reset()
 }
 
 // parseStates converts OpenSky's mixed arrays into typed Flight structs
