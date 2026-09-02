@@ -5,10 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly at 03:00 UTC
+    - cron: "0 3 * * *"
+
+env:
+  GO_VERSION: "1.26"
+  GOLANGCI_LINT_VERSION: "v1.64.0"
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
 
     steps:
       - name: Checkout code
@@ -17,17 +25,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Download dependencies
-        run: go mod download
 
       - name: Run go vet
         run: go vet ./...
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+      - name: Run short tests
+        run: go test -short -v -race -coverprofile=coverage.out ./...
 
       - name: Check coverage
         run: |
@@ -37,6 +42,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
 
     steps:
       - name: Checkout code
@@ -45,18 +51,27 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Cache golangci-lint binary
+        id: golangci-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/golangci-lint
+          key: ${{ runner.os }}-golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}
+
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.0
+        if: steps.golangci-cache.outputs.cache-hit != 'true'
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
 
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        run: ~/go/bin/golangci-lint run ./...
 
   build:
     runs-on: ubuntu-latest
     needs: [test, lint]
+    if: github.event_name != 'schedule'
 
     steps:
       - name: Checkout code
@@ -65,7 +80,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Build
@@ -91,3 +106,51 @@ jobs:
         run: railway up --detach --service ${{ secrets.RAILWAY_SERVICE }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  nightly-integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run full test suite (includes integration)
+        run: go test -v -race -coverprofile=coverage-nightly.out ./...
+
+      - name: Check nightly coverage
+        run: go tool cover -func=coverage-nightly.out | tail -1
+
+  nightly-lint:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Cache golangci-lint binary
+        id: golangci-cache-nightly
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/golangci-lint
+          key: ${{ runner.os }}-golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}
+
+      - name: Install golangci-lint
+        if: steps.golangci-cache-nightly.outputs.cache-hit != 'true'
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
+
+      - name: Run nightly golangci-lint
+        run: ~/go/bin/golangci-lint run ./...
