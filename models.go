@@ -32,16 +32,72 @@ type FlightsResponse struct {
 	Flights []Flight `json:"flights"`
 }
 
+// ErrorResponse represents a standard API error payload
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Hint    string `json:"hint,omitempty"`
+	Example string `json:"example,omitempty"`
+}
+
+// PingResponse represents the health check response
+type PingResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+// CacheStats represents cache stats details
+type CacheStats struct {
+	Entries int    `json:"entries"`
+	TTL     string `json:"ttl"`
+}
+
+// CacheStatsResponse represents the cache stats response payload
+type CacheStatsResponse struct {
+	FlightCache CacheStats `json:"flightCache"`
+}
+
+// AirportResponse represents airport JSON payloads returned by handlers
+type AirportResponse struct {
+	ICAO         string  `json:"icao"`
+	IATA         string  `json:"iata"`
+	Name         string  `json:"name"`
+	Type         string  `json:"type,omitempty"`
+	Municipality string  `json:"municipality"`
+	Country      string  `json:"country"`
+	Region       string  `json:"region,omitempty"`
+	Lat          float64 `json:"lat"`
+	Lng          float64 `json:"lng"`
+	Radius       float64 `json:"radius,omitempty"`
+}
+
+// AirportSearchResponse represents airport search results
+type AirportSearchResponse struct {
+	Query   string            `json:"query"`
+	Count   int               `json:"count"`
+	Results []AirportResponse `json:"results"`
+}
+
+// BoundingBoxResponse represents bounding box values in API responses
+type BoundingBoxResponse struct {
+	Lamin float64 `json:"lamin"`
+	Lamax float64 `json:"lamax"`
+	Lomin float64 `json:"lomin"`
+	Lomax float64 `json:"lomax"`
+}
+
+// FlightsByAirportResponse represents flights in the area around an airport
+type FlightsByAirportResponse struct {
+	Airport AirportResponse     `json:"airport"`
+	BBox    BoundingBoxResponse `json:"bbox"`
+	Time    int64               `json:"time"`
+	Count   int                 `json:"count"`
+	Flights []Flight            `json:"flights"`
+}
+
 // BoundingBox represents a geographic rectangle for area queries
 type BoundingBox struct {
 	LatMin float64 // Southern boundary
 	LatMax float64 // Northern boundary
 	LonMin float64 // Western boundary
 	LonMax float64 // Eastern boundary
-}
-
-// FilterParams holds the optional query parameters for filtering flights
-type FilterParams struct {
-	Country  *string
-	OnGround *bool
 }

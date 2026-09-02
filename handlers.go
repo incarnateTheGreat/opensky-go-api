@@ -13,66 +13,49 @@ import (
 // HTTP HANDLERS
 // =============================================================================
 
-// getFlights handles GET /flights
-// Supports query params: ?country=US&on_ground=true
-func getFlights(c *gin.Context) {
-	var params FilterParams
-
-	country := c.Query("country")
-	if country != "" {
-		params.Country = &country
-	}
-
-	onGroundStr := c.Query("on_ground")
-	if onGroundStr != "" {
-		onGround := onGroundStr == "true"
-		params.OnGround = &onGround
-	}
-
-	flights, timestamp, err := fetchFlights("")
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	filtered := filterFlights(flights, params)
-
-	c.JSON(http.StatusOK, FlightsResponse{
-		Time:    timestamp,
-		Count:   len(filtered),
-		Flights: filtered,
+// getPing handles GET /ping
+// @Summary Health check
+// @Description Basic health check endpoint
+// @Tags system
+// @Produce json
+// @Success 200 {object} PingResponse
+// @Router /ping [get]
+func getPing(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "pong",
+		"status":  "healthy",
 	})
 }
 
-// getFlightByICAO handles GET /flights/:icao
-func getFlightByICAO(c *gin.Context) {
-	icao := c.Param("icao")
-
-	flights, timestamp, err := fetchFlights(icao)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	if len(flights) == 0 {
-		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("no flight found with ICAO24: %s", icao),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, FlightsResponse{
-		Time:    timestamp,
-		Count:   len(flights),
-		Flights: flights,
+// getCacheStats handles GET /cache/stats
+// @Summary Cache stats
+// @Description Returns current in-memory cache statistics
+// @Tags system
+// @Produce json
+// @Success 200 {object} CacheStatsResponse
+// @Router /cache/stats [get]
+func getCacheStats(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"flightCache": gin.H{
+			"entries": flightCache.Size(),
+			"ttl":     FlightCacheTTL.String(),
+		},
 	})
 }
 
 // getFlightsByArea handles GET /flights/area?lamin=...&lamax=...&lomin=...&lomax=...
+// @Summary List flights in area
+// @Description Get flights within a geographic bounding box
+// @Tags flights
+// @Produce json
+// @Param lamin query number true "Minimum latitude"
+// @Param lamax query number true "Maximum latitude"
+// @Param lomin query number true "Minimum longitude"
+// @Param lomax query number true "Maximum longitude"
+// @Success 200 {object} FlightsResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /flights/area [get]
 func getFlightsByArea(c *gin.Context) {
 	laminStr := c.Query("lamin")
 	lamaxStr := c.Query("lamax")
@@ -142,6 +125,16 @@ func getFlightsByArea(c *gin.Context) {
 
 // searchAirportsHandler handles GET /airports?q=...
 // Autocomplete search for airports by ICAO, IATA, name, or city
+// @Summary Search airports
+// @Description Search airports by ICAO, IATA, airport name, or city
+// @Tags airports
+// @Produce json
+// @Param q query string true "Search query"
+// @Param limit query int false "Max results (1-50, default 10)"
+// @Success 200 {object} AirportSearchResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Router /airports [get]
 func searchAirportsHandler(c *gin.Context) {
 	query := c.Query("q")
 	if query == "" {
@@ -193,6 +186,16 @@ func searchAirportsHandler(c *gin.Context) {
 // getFlightsByAirport handles GET /flights/airport/:icao
 // Returns real-time flights in bounding box around an airport
 // Optional query param: ?radius=0.5 (degrees, default 0.3)
+// @Summary List flights near airport
+// @Description Get flights near an airport using a radius-based bounding box
+// @Tags flights
+// @Produce json
+// @Param icao path string true "Airport ICAO code"
+// @Param radius query number false "Radius in degrees (0-5, default 0.3)"
+// @Success 200 {object} FlightsByAirportResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /flights/airport/{icao} [get]
 func getFlightsByAirport(c *gin.Context) {
 	icao := strings.ToUpper(c.Param("icao"))
 
@@ -246,6 +249,14 @@ func getFlightsByAirport(c *gin.Context) {
 
 // getAirportByICAO handles GET /airports/:icao
 // Returns details for a specific airport by ICAO code
+// @Summary Get airport by ICAO
+// @Description Get airport details by 4-letter ICAO code
+// @Tags airports
+// @Produce json
+// @Param icao path string true "Airport ICAO code"
+// @Success 200 {object} AirportResponse
+// @Failure 404 {object} ErrorResponse
+// @Router /airports/{icao} [get]
 func getAirportByICAO(c *gin.Context) {
 	icao := strings.ToUpper(c.Param("icao"))
 

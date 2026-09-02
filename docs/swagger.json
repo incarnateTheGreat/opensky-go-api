@@ -1,0 +1,439 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Flight tracking API with airport search, caching, and rate limiting.",
+        "title": "OpenSky Go API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/airports": {
+            "get": {
+                "description": "Search airports by ICAO, IATA, airport name, or city",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "airports"
+                ],
+                "summary": "Search airports",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (1-50, default 10)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.AirportSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/airports/{icao}": {
+            "get": {
+                "description": "Get airport details by 4-letter ICAO code",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "airports"
+                ],
+                "summary": "Get airport by ICAO",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Airport ICAO code",
+                        "name": "icao",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.AirportResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/cache/stats": {
+            "get": {
+                "description": "Returns current in-memory cache statistics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Cache stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.CacheStatsResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flights/airport/{icao}": {
+            "get": {
+                "description": "Get flights near an airport using a radius-based bounding box",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flights"
+                ],
+                "summary": "List flights near airport",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Airport ICAO code",
+                        "name": "icao",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Radius in degrees (0-5, default 0.3)",
+                        "name": "radius",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.FlightsByAirportResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flights/area": {
+            "get": {
+                "description": "Get flights within a geographic bounding box",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flights"
+                ],
+                "summary": "List flights in area",
+                "parameters": [
+                    {
+                        "type": "number",
+                        "description": "Minimum latitude",
+                        "name": "lamin",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Maximum latitude",
+                        "name": "lamax",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum longitude",
+                        "name": "lomin",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Maximum longitude",
+                        "name": "lomax",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.FlightsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/main.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/ping": {
+            "get": {
+                "description": "Basic health check endpoint",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.PingResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "main.AirportResponse": {
+            "type": "object",
+            "properties": {
+                "country": {
+                    "type": "string"
+                },
+                "iata": {
+                    "type": "string"
+                },
+                "icao": {
+                    "type": "string"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lng": {
+                    "type": "number"
+                },
+                "municipality": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "radius": {
+                    "type": "number"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.AirportSearchResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/main.AirportResponse"
+                    }
+                }
+            }
+        },
+        "main.BoundingBoxResponse": {
+            "type": "object",
+            "properties": {
+                "lamax": {
+                    "type": "number"
+                },
+                "lamin": {
+                    "type": "number"
+                },
+                "lomax": {
+                    "type": "number"
+                },
+                "lomin": {
+                    "type": "number"
+                }
+            }
+        },
+        "main.CacheStats": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "integer"
+                },
+                "ttl": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.CacheStatsResponse": {
+            "type": "object",
+            "properties": {
+                "flightCache": {
+                    "$ref": "#/definitions/main.CacheStats"
+                }
+            }
+        },
+        "main.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "example": {
+                    "type": "string"
+                },
+                "hint": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.Flight": {
+            "type": "object",
+            "properties": {
+                "altitude": {
+                    "description": "Barometric altitude in meters",
+                    "type": "number"
+                },
+                "callsign": {
+                    "description": "Flight number (pointer = nullable)",
+                    "type": "string"
+                },
+                "icao24": {
+                    "description": "Unique aircraft identifier",
+                    "type": "string"
+                },
+                "last_contact": {
+                    "description": "Unix timestamp of last contact",
+                    "type": "integer"
+                },
+                "latitude": {
+                    "description": "WGS-84 latitude",
+                    "type": "number"
+                },
+                "longitude": {
+                    "description": "WGS-84 longitude",
+                    "type": "number"
+                },
+                "on_ground": {
+                    "description": "Is the aircraft on ground?",
+                    "type": "boolean"
+                },
+                "origin_country": {
+                    "description": "Country of registration",
+                    "type": "string"
+                },
+                "velocity": {
+                    "description": "Ground speed in m/s",
+                    "type": "number"
+                }
+            }
+        },
+        "main.FlightsByAirportResponse": {
+            "type": "object",
+            "properties": {
+                "airport": {
+                    "$ref": "#/definitions/main.AirportResponse"
+                },
+                "bbox": {
+                    "$ref": "#/definitions/main.BoundingBoxResponse"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "flights": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/main.Flight"
+                    }
+                },
+                "time": {
+                    "type": "integer"
+                }
+            }
+        },
+        "main.FlightsResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "flights": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/main.Flight"
+                    }
+                },
+                "time": {
+                    "type": "integer"
+                }
+            }
+        },
+        "main.PingResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

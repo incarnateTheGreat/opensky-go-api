@@ -19,8 +19,6 @@ Built with Go and [Gin](https://github.com/gin-gonic/gin).
 
 | Method | Path                     | Description                                              |
 | ------ | ------------------------ | -------------------------------------------------------- |
-| GET    | `/flights`               | All current flights (`?country=US&on_ground=true`)       |
-| GET    | `/flights/:icao`         | Single aircraft by ICAO24 identifier                     |
 | GET    | `/flights/area`          | Flights in bounding box (`?lamin=&lamax=&lomin=&lomax=`) |
 | GET    | `/flights/airport/:icao` | Flights near an airport (`?radius=0.3`)                  |
 
@@ -49,7 +47,6 @@ go run .
 
 # Test endpoints
 curl http://localhost:8080/ping
-curl http://localhost:8080/flights | jq '.count'
 curl "http://localhost:8080/airports?q=JFK"
 curl "http://localhost:8080/flights/area?lamin=40&lamax=42&lomin=-75&lomax=-73"
 ```

@@ -2,17 +2,25 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
+	_ "opensky-go-api/docs"
 )
 
 // =============================================================================
 // MAIN - Application entry point
 // =============================================================================
+
+// @title OpenSky Go API
+// @version 1.0
+// @description Flight tracking API with airport search, caching, and rate limiting.
+// @BasePath /
 
 func main() {
 	// Load environment variables from .env file
@@ -39,29 +47,16 @@ func main() {
 	router.Use(RateLimitMiddleware(defaultRateLimiter))
 	fmt.Println("✅ Rate limiting enabled (10 req/s per IP)")
 
-	// Health check (rate limited but lightweight)
-	router.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-			"status":  "healthy",
-		})
-	})
+	// Swagger docs
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	// Cache stats (for debugging)
-	router.GET("/cache/stats", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"flightCache": gin.H{
-				"entries": flightCache.Size(),
-				"ttl":     FlightCacheTTL.String(),
-			},
-		})
-	})
+	// System endpoints
+	router.GET("/ping", getPing)
+	router.GET("/cache/stats", getCacheStats)
 
 	// Flight endpoints (real-time)
-	router.GET("/flights", getFlights)
 	router.GET("/flights/area", getFlightsByArea)
 	router.GET("/flights/airport/:icao", getFlightsByAirport) // Flights around airport
-	router.GET("/flights/:icao", getFlightByICAO)
 
 	// Airport endpoints
 	router.GET("/airports", searchAirportsHandler)  // Search/autocomplete
