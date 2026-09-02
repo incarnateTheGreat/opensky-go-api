@@ -43,6 +43,9 @@ var openSkyClientSecret string
 // openSkyRequestTimeout controls upstream HTTP timeout per attempt.
 var openSkyRequestTimeout = 12 * time.Second
 
+// openSkyTotalRequestTimeout caps total time spent across primary + fallback.
+var openSkyTotalRequestTimeout = 14 * time.Second
+
 // openSkyMaxAttempts controls retries per upstream.
 var openSkyMaxAttempts = 2
 
@@ -85,6 +88,16 @@ func init() {
 		}
 	}
 
+	if totalTimeoutSeconds := os.Getenv("OPENSKY_TOTAL_TIMEOUT_SECONDS"); totalTimeoutSeconds != "" {
+		if seconds, err := strconv.Atoi(totalTimeoutSeconds); err == nil && seconds >= 3 && seconds <= 120 {
+			openSkyTotalRequestTimeout = time.Duration(seconds) * time.Second
+		}
+	} else {
+		// By default, reserve only a small cushion above per-attempt timeout
+		// to avoid doubling latency on sequential failover.
+		openSkyTotalRequestTimeout = openSkyRequestTimeout + 2*time.Second
+	}
+
 	if attemptsValue := os.Getenv("OPENSKY_MAX_ATTEMPTS"); attemptsValue != "" {
 		if attempts, err := strconv.Atoi(attemptsValue); err == nil && attempts >= 1 && attempts <= 5 {
 			openSkyMaxAttempts = attempts
@@ -123,6 +136,7 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 		url = fmt.Sprintf("%s?icao24=%s", url, icao24)
 	}
 
+	totalStarted := time.Now()
 	primaryStarted := time.Now()
 	flights, timestamp, err := doFetch(url)
 	primaryDuration := time.Since(primaryStarted)
@@ -138,8 +152,19 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 			reason := classifyFailoverReason(err)
 			if shouldFailover(err) {
 				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, primaryDuration, err)
+				remainingBudget := openSkyTotalRequestTimeout - time.Since(totalStarted)
+				if remainingBudget <= 0 {
+					openSkyFailoverDiagnostics.recordSkipped(requestID, "no_remaining_budget", url, fallbackURL, primaryDuration, err)
+					return nil, 0, err
+				}
+
+				fallbackTimeout := remainingBudget
+				if fallbackTimeout > openSkyRequestTimeout {
+					fallbackTimeout = openSkyRequestTimeout
+				}
+
 				fallbackStarted := time.Now()
-				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
+				flights, timestamp, fallbackErr := doFetchWithAttemptsAndTimeout(fallbackURL, 1, fallbackTimeout)
 				fallbackDuration := time.Since(fallbackStarted)
 				if fallbackErr == nil {
 					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration)
@@ -198,6 +223,7 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 		openSkyBaseURL, bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax,
 	)
 
+	totalStarted := time.Now()
 	primaryStarted := time.Now()
 	flights, timestamp, err := doFetch(url)
 	primaryDuration := time.Since(primaryStarted)
@@ -213,8 +239,19 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 			reason := classifyFailoverReason(err)
 			if shouldFailover(err) {
 				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, primaryDuration, err)
+				remainingBudget := openSkyTotalRequestTimeout - time.Since(totalStarted)
+				if remainingBudget <= 0 {
+					openSkyFailoverDiagnostics.recordSkipped(requestID, "no_remaining_budget", url, fallbackURL, primaryDuration, err)
+					return nil, 0, err
+				}
+
+				fallbackTimeout := remainingBudget
+				if fallbackTimeout > openSkyRequestTimeout {
+					fallbackTimeout = openSkyRequestTimeout
+				}
+
 				fallbackStarted := time.Now()
-				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
+				flights, timestamp, fallbackErr := doFetchWithAttemptsAndTimeout(fallbackURL, 1, fallbackTimeout)
 				fallbackDuration := time.Since(fallbackStarted)
 				if fallbackErr == nil {
 					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration)
@@ -266,6 +303,19 @@ func doFetch(targetURL string) ([]Flight, int64, error) {
 }
 
 func doFetchWithAttempts(targetURL string, maxAttempts int) ([]Flight, int64, error) {
+	return doFetchWithAttemptsWithClient(targetURL, maxAttempts, openSkyClient)
+}
+
+func doFetchWithAttemptsAndTimeout(targetURL string, maxAttempts int, timeout time.Duration) ([]Flight, int64, error) {
+	if timeout < 1*time.Second {
+		timeout = 1 * time.Second
+	}
+
+	client := &http.Client{Timeout: timeout}
+	return doFetchWithAttemptsWithClient(targetURL, maxAttempts, client)
+}
+
+func doFetchWithAttemptsWithClient(targetURL string, maxAttempts int, client *http.Client) ([]Flight, int64, error) {
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
@@ -279,7 +329,7 @@ func doFetchWithAttempts(targetURL string, maxAttempts int) ([]Flight, int64, er
 		// Add proxy auth key if configured
 		applyUpstreamAuth(req, targetURL)
 
-		resp, err := openSkyClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			if attempt < maxAttempts {
 				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)

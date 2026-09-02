@@ -82,6 +82,10 @@ OPENSKY_API_KEY=your_key
 OPENSKY_TIMEOUT_SECONDS=10
 OPENSKY_MAX_ATTEMPTS=2
 
+# Total time budget across primary + fallback attempts
+# Default is OPENSKY_TIMEOUT_SECONDS + 2
+OPENSKY_TOTAL_TIMEOUT_SECONDS=12
+
 # Serve expired cache up to this age (seconds) when both upstreams fail
 # Set 0 to disable stale-on-error behavior
 OPENSKY_STALE_MAX_AGE_SECONDS=300
