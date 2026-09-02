@@ -43,14 +43,29 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 
 	// Check if expired
 	if time.Now().After(entry.Expiration) {
-		// Entry is expired - remove it (lazy deletion)
-		c.mu.Lock()
-		delete(c.data, key)
-		c.mu.Unlock()
 		return nil, false
 	}
 
 	return entry.Value, true
+}
+
+// GetStale retrieves a value even if it is expired.
+// Returns staleAge > 0 when the entry is expired.
+func (c *Cache) GetStale(key string) (interface{}, bool, time.Duration) {
+	c.mu.RLock()
+	entry, found := c.data[key]
+	c.mu.RUnlock()
+
+	if !found {
+		return nil, false, 0
+	}
+
+	now := time.Now()
+	if now.After(entry.Expiration) {
+		return entry.Value, true, now.Sub(entry.Expiration)
+	}
+
+	return entry.Value, true, 0
 }
 
 // Set stores a value in the cache with a TTL (time to live)

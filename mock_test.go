@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustEncodeJSON(t *testing.T, w http.ResponseWriter, v interface{}) {
@@ -396,5 +397,75 @@ func TestFetchFlights_FallbackDiagnosticsCombinedError(t *testing.T) {
 	}
 	if stats.LastFallbackError == "" {
 		t.Fatal("expected lastFallbackError to be populated")
+	}
+	if stats.LastPrimaryMS < 0 {
+		t.Fatalf("expected non-negative lastPrimaryMs, got %d", stats.LastPrimaryMS)
+	}
+	if stats.LastFallbackMS < 0 {
+		t.Fatalf("expected non-negative lastFallbackMs, got %d", stats.LastFallbackMS)
+	}
+}
+
+func TestFetchFlights_ServesStaleWhenPrimaryAndFallbackFail(t *testing.T) {
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer primaryServer.Close()
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer fallbackServer.Close()
+
+	originalBaseURL := openSkyBaseURL
+	originalFallbackBaseURL := openSkyFallbackBaseURL
+	originalStaleMaxAge := openSkyStaleMaxAge
+	defer func() {
+		openSkyBaseURL = originalBaseURL
+		openSkyFallbackBaseURL = originalFallbackBaseURL
+		openSkyStaleMaxAge = originalStaleMaxAge
+	}()
+
+	openSkyBaseURL = primaryServer.URL
+	openSkyFallbackBaseURL = fallbackServer.URL
+	openSkyStaleMaxAge = 5 * time.Minute
+	flightCache.Clear()
+	resetOpenSkyFailoverStats()
+
+	staleCallsign := "STALE123"
+	flightCache.Set("flights:all", cachedFlightResult{
+		Flights: []Flight{{
+			Icao24:        "stale1",
+			Callsign:      &staleCallsign,
+			OriginCountry: "GR",
+			LastContact:   1111111111,
+		}},
+		Timestamp: 1111111111,
+	}, -1*time.Second)
+
+	flights, timestamp, err := fetchFlights("")
+	if err != nil {
+		t.Fatalf("expected stale success, got error: %v", err)
+	}
+
+	if timestamp != 1111111111 {
+		t.Fatalf("expected stale timestamp 1111111111, got %d", timestamp)
+	}
+	if len(flights) != 1 {
+		t.Fatalf("expected 1 stale flight, got %d", len(flights))
+	}
+	if flights[0].Icao24 != "stale1" {
+		t.Fatalf("expected stale flight icao24 stale1, got %s", flights[0].Icao24)
+	}
+
+	stats := getOpenSkyFailoverStats()
+	if stats.ServedStale != 1 {
+		t.Fatalf("expected servedStale=1, got %d", stats.ServedStale)
+	}
+	if !stats.LastServedStale {
+		t.Fatal("expected lastServedStale=true")
+	}
+	if stats.LastStaleAgeMS <= 0 {
+		t.Fatalf("expected positive lastStaleAgeMs, got %d", stats.LastStaleAgeMS)
 	}
 }

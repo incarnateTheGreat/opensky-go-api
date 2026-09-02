@@ -56,6 +56,12 @@ func getCORSDebug(c *gin.Context) {
 	})
 }
 
+// getUpstreamDebug handles GET /debug/upstream
+// This endpoint is registered only outside production.
+func getUpstreamDebug(c *gin.Context) {
+	c.JSON(http.StatusOK, probeOpenSkyUpstreams())
+}
+
 // getFlightsByArea handles GET /flights/area?lamin=...&lamax=...&lomin=...&lomax=...
 // @Summary List flights in area
 // @Description Get flights within a geographic bounding box

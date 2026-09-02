@@ -36,8 +36,13 @@ Built with Go and [Gin](https://github.com/gin-gonic/gin).
 | GET    | `/ping`        | Health check                          |
 | GET    | `/cache/stats` | Cache statistics                      |
 | GET    | `/debug/cors`  | CORS debug info (non-production only) |
+| GET    | `/debug/upstream` | Probe upstream latency/status (non-production only) |
 
-`/cache/stats` now also includes upstream failover diagnostics (`upstream`) with counters and last-event details, including `lastRequestId` to correlate an API error with the most recent failover event.
+`/cache/stats` now also includes upstream failover diagnostics (`upstream`) with counters and last-event details, including:
+
+- `lastRequestId` to correlate an API error with a failover event
+- `lastPrimaryMs` and `lastFallbackMs` to identify where latency is spent
+- `servedStale`, `lastServedStale`, and `lastStaleAgeMs` to confirm stale-on-error behavior
 
 ## Run Locally
 
@@ -71,6 +76,14 @@ OPENSKY_API_KEY=your_key
 # Upstream request tuning (per attempt)
 OPENSKY_TIMEOUT_SECONDS=10
 OPENSKY_MAX_ATTEMPTS=2
+
+# Serve expired cache up to this age (seconds) when both upstreams fail
+# Set 0 to disable stale-on-error behavior
+OPENSKY_STALE_MAX_AGE_SECONDS=300
+
+# Optional probe controls for /debug/upstream
+OPENSKY_PROBE_TIMEOUT_SECONDS=5
+OPENSKY_PROBE_PATH=/api/states/all?lamin=37.90&lamax=38.00&lomin=23.80&lomax=23.90
 
 # Comma-separated list of allowed frontend origins for browser requests
 # Example: http://localhost:5173,https://your-app.pages.dev
@@ -108,6 +121,20 @@ If health is `200` but proxy calls are `522`:
 - Prefer direct OpenSky as primary and worker as fallback.
 - Lower timeout/attempts to fail fast and avoid long hangs.
 - Retry with a smaller area query to reduce upstream load.
+
+### Upstream Probe Endpoint
+
+Use this non-production endpoint to benchmark both configured upstreams from the same runtime:
+
+```bash
+curl -s "<API_URL>/debug/upstream" | jq .
+```
+
+Look at:
+
+- `primary.success`, `primary.durationMs`, `primary.statusCode`, `primary.error`
+- `fallback.success`, `fallback.durationMs`, `fallback.statusCode`, `fallback.error`
+- `probePath` and `timeoutMs` used for the probe
 
 ### Verify CORS Manually
 

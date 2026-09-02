@@ -40,8 +40,14 @@ var openSkyRequestTimeout = 12 * time.Second
 // openSkyMaxAttempts controls retries per upstream.
 var openSkyMaxAttempts = 2
 
+// openSkyStaleMaxAge controls how long expired cache entries can be served
+// when both upstreams fail.
+var openSkyStaleMaxAge = 5 * time.Minute
+
 var openSkyFailoverDiagnostics = newFailoverDiagnostics()
 var failoverRequestIDCounter uint64
+
+const defaultUpstreamProbePath = "/api/states/all?lamin=37.90&lamax=38.00&lomin=23.80&lomax=23.90"
 
 func init() {
 	// Allow overriding the primary base URL.
@@ -77,6 +83,12 @@ func init() {
 		}
 	}
 
+	if staleMaxAgeSeconds := os.Getenv("OPENSKY_STALE_MAX_AGE_SECONDS"); staleMaxAgeSeconds != "" {
+		if seconds, err := strconv.Atoi(staleMaxAgeSeconds); err == nil && seconds >= 0 && seconds <= 3600 {
+			openSkyStaleMaxAge = time.Duration(seconds) * time.Second
+		}
+	}
+
 	openSkyClient = &http.Client{
 		Timeout: openSkyRequestTimeout,
 	}
@@ -103,7 +115,9 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 		url = fmt.Sprintf("%s?icao24=%s", url, icao24)
 	}
 
+	primaryStarted := time.Now()
 	flights, timestamp, err := doFetch(url)
+	primaryDuration := time.Since(primaryStarted)
 	if err != nil && openSkyFallbackBaseURL != "" {
 		fallbackURL := openSkyFallbackBaseURL + "/api/states/all"
 		if icao24 != "" {
@@ -115,14 +129,24 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 		if fallbackURL != url {
 			reason := classifyFailoverReason(err)
 			if shouldFailover(err) {
-				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, err)
+				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, primaryDuration, err)
+				fallbackStarted := time.Now()
 				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
+				fallbackDuration := time.Since(fallbackStarted)
 				if fallbackErr == nil {
-					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL)
+					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration)
 					flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
 					return flights, timestamp, nil
 				}
-				openSkyFailoverDiagnostics.recordFailure(requestID, reason, url, fallbackURL, fallbackErr)
+
+				if staleValue, found, staleAge := flightCache.GetStale(cacheKey); found && staleAge > 0 && staleAge <= openSkyStaleMaxAge {
+					if staleResult, ok := staleValue.(cachedFlightResult); ok {
+						openSkyFailoverDiagnostics.recordServedStale(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration, staleAge, err, fallbackErr)
+						return staleResult.Flights, staleResult.Timestamp, nil
+					}
+				}
+
+				openSkyFailoverDiagnostics.recordFailure(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration, fallbackErr)
 				return nil, 0, failoverError{
 					RequestID:   requestID,
 					Reason:      reason,
@@ -132,9 +156,9 @@ func fetchFlights(icao24 string) ([]Flight, int64, error) {
 					FallbackErr: fallbackErr,
 				}
 			}
-			openSkyFailoverDiagnostics.recordSkipped(requestID, "non_retryable_primary_error", url, fallbackURL, err)
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "non_retryable_primary_error", url, fallbackURL, primaryDuration, err)
 		} else {
-			openSkyFailoverDiagnostics.recordSkipped(requestID, "fallback_same_as_primary", url, fallbackURL, err)
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "fallback_same_as_primary", url, fallbackURL, primaryDuration, err)
 		}
 	}
 	if err != nil {
@@ -166,7 +190,9 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 		openSkyBaseURL, bbox.LatMin, bbox.LatMax, bbox.LonMin, bbox.LonMax,
 	)
 
+	primaryStarted := time.Now()
 	flights, timestamp, err := doFetch(url)
+	primaryDuration := time.Since(primaryStarted)
 	if err != nil && openSkyFallbackBaseURL != "" {
 		fallbackURL := fmt.Sprintf(
 			"%s/api/states/all?lamin=%f&lamax=%f&lomin=%f&lomax=%f",
@@ -178,14 +204,24 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 		if fallbackURL != url {
 			reason := classifyFailoverReason(err)
 			if shouldFailover(err) {
-				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, err)
+				openSkyFailoverDiagnostics.recordAttempt(requestID, reason, url, fallbackURL, primaryDuration, err)
+				fallbackStarted := time.Now()
 				flights, timestamp, fallbackErr := doFetchWithAttempts(fallbackURL, 1)
+				fallbackDuration := time.Since(fallbackStarted)
 				if fallbackErr == nil {
-					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL)
+					openSkyFailoverDiagnostics.recordSuccess(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration)
 					flightCache.Set(cacheKey, cachedFlightResult{Flights: flights, Timestamp: timestamp}, FlightCacheTTL)
 					return flights, timestamp, nil
 				}
-				openSkyFailoverDiagnostics.recordFailure(requestID, reason, url, fallbackURL, fallbackErr)
+
+				if staleValue, found, staleAge := flightCache.GetStale(cacheKey); found && staleAge > 0 && staleAge <= openSkyStaleMaxAge {
+					if staleResult, ok := staleValue.(cachedFlightResult); ok {
+						openSkyFailoverDiagnostics.recordServedStale(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration, staleAge, err, fallbackErr)
+						return staleResult.Flights, staleResult.Timestamp, nil
+					}
+				}
+
+				openSkyFailoverDiagnostics.recordFailure(requestID, reason, url, fallbackURL, primaryDuration, fallbackDuration, fallbackErr)
 				return nil, 0, failoverError{
 					RequestID:   requestID,
 					Reason:      reason,
@@ -195,9 +231,9 @@ func fetchFlightsByArea(bbox BoundingBox) ([]Flight, int64, error) {
 					FallbackErr: fallbackErr,
 				}
 			}
-			openSkyFailoverDiagnostics.recordSkipped(requestID, "non_retryable_primary_error", url, fallbackURL, err)
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "non_retryable_primary_error", url, fallbackURL, primaryDuration, err)
 		} else {
-			openSkyFailoverDiagnostics.recordSkipped(requestID, "fallback_same_as_primary", url, fallbackURL, err)
+			openSkyFailoverDiagnostics.recordSkipped(requestID, "fallback_same_as_primary", url, fallbackURL, primaryDuration, err)
 		}
 	}
 	if err != nil {
@@ -349,12 +385,17 @@ type openSkyFailoverStats struct {
 	FailoverSuccess   uint64 `json:"failoverSuccess"`
 	FailoverFailures  uint64 `json:"failoverFailures"`
 	FailoverSkipped   uint64 `json:"failoverSkipped"`
+	ServedStale       uint64 `json:"servedStale"`
 	LastRequestID     string `json:"lastRequestId,omitempty"`
 	LastReason        string `json:"lastReason,omitempty"`
 	LastPrimaryURL    string `json:"lastPrimaryUrl,omitempty"`
 	LastFallbackURL   string `json:"lastFallbackUrl,omitempty"`
 	LastPrimaryError  string `json:"lastPrimaryError,omitempty"`
 	LastFallbackError string `json:"lastFallbackError,omitempty"`
+	LastPrimaryMS     int64  `json:"lastPrimaryMs,omitempty"`
+	LastFallbackMS    int64  `json:"lastFallbackMs,omitempty"`
+	LastStaleAgeMS    int64  `json:"lastStaleAgeMs,omitempty"`
+	LastServedStale   bool   `json:"lastServedStale"`
 	LastUpdatedUTC    string `json:"lastUpdatedUtc,omitempty"`
 }
 
@@ -372,7 +413,7 @@ func newFailoverRequestID() string {
 	return fmt.Sprintf("fo-%d-%d", time.Now().UTC().UnixMilli(), seq)
 }
 
-func (d *failoverDiagnostics) recordAttempt(requestID, reason, primaryURL, fallbackURL string, primaryErr error) {
+func (d *failoverDiagnostics) recordAttempt(requestID, reason, primaryURL, fallbackURL string, primaryDuration time.Duration, primaryErr error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -384,10 +425,14 @@ func (d *failoverDiagnostics) recordAttempt(requestID, reason, primaryURL, fallb
 	d.stats.LastFallbackURL = fallbackURL
 	d.stats.LastPrimaryError = primaryErr.Error()
 	d.stats.LastFallbackError = ""
+	d.stats.LastPrimaryMS = primaryDuration.Milliseconds()
+	d.stats.LastFallbackMS = 0
+	d.stats.LastStaleAgeMS = 0
+	d.stats.LastServedStale = false
 	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
 }
 
-func (d *failoverDiagnostics) recordSuccess(requestID, reason, primaryURL, fallbackURL string) {
+func (d *failoverDiagnostics) recordSuccess(requestID, reason, primaryURL, fallbackURL string, primaryDuration, fallbackDuration time.Duration) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -396,11 +441,16 @@ func (d *failoverDiagnostics) recordSuccess(requestID, reason, primaryURL, fallb
 	d.stats.LastReason = reason
 	d.stats.LastPrimaryURL = primaryURL
 	d.stats.LastFallbackURL = fallbackURL
+	d.stats.LastPrimaryError = ""
 	d.stats.LastFallbackError = ""
+	d.stats.LastPrimaryMS = primaryDuration.Milliseconds()
+	d.stats.LastFallbackMS = fallbackDuration.Milliseconds()
+	d.stats.LastStaleAgeMS = 0
+	d.stats.LastServedStale = false
 	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
 }
 
-func (d *failoverDiagnostics) recordFailure(requestID, reason, primaryURL, fallbackURL string, fallbackErr error) {
+func (d *failoverDiagnostics) recordFailure(requestID, reason, primaryURL, fallbackURL string, primaryDuration, fallbackDuration time.Duration, fallbackErr error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -410,10 +460,14 @@ func (d *failoverDiagnostics) recordFailure(requestID, reason, primaryURL, fallb
 	d.stats.LastPrimaryURL = primaryURL
 	d.stats.LastFallbackURL = fallbackURL
 	d.stats.LastFallbackError = fallbackErr.Error()
+	d.stats.LastPrimaryMS = primaryDuration.Milliseconds()
+	d.stats.LastFallbackMS = fallbackDuration.Milliseconds()
+	d.stats.LastStaleAgeMS = 0
+	d.stats.LastServedStale = false
 	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
 }
 
-func (d *failoverDiagnostics) recordSkipped(requestID, reason, primaryURL, fallbackURL string, primaryErr error) {
+func (d *failoverDiagnostics) recordSkipped(requestID, reason, primaryURL, fallbackURL string, primaryDuration time.Duration, primaryErr error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -425,6 +479,29 @@ func (d *failoverDiagnostics) recordSkipped(requestID, reason, primaryURL, fallb
 	d.stats.LastFallbackURL = fallbackURL
 	d.stats.LastPrimaryError = primaryErr.Error()
 	d.stats.LastFallbackError = ""
+	d.stats.LastPrimaryMS = primaryDuration.Milliseconds()
+	d.stats.LastFallbackMS = 0
+	d.stats.LastStaleAgeMS = 0
+	d.stats.LastServedStale = false
+	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
+}
+
+func (d *failoverDiagnostics) recordServedStale(requestID, reason, primaryURL, fallbackURL string, primaryDuration, fallbackDuration, staleAge time.Duration, primaryErr, fallbackErr error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.stats.FailoverFailures++
+	d.stats.ServedStale++
+	d.stats.LastRequestID = requestID
+	d.stats.LastReason = reason
+	d.stats.LastPrimaryURL = primaryURL
+	d.stats.LastFallbackURL = fallbackURL
+	d.stats.LastPrimaryError = primaryErr.Error()
+	d.stats.LastFallbackError = fallbackErr.Error()
+	d.stats.LastPrimaryMS = primaryDuration.Milliseconds()
+	d.stats.LastFallbackMS = fallbackDuration.Milliseconds()
+	d.stats.LastStaleAgeMS = staleAge.Milliseconds()
+	d.stats.LastServedStale = true
 	d.stats.LastUpdatedUTC = time.Now().UTC().Format(time.RFC3339)
 }
 
@@ -448,6 +525,101 @@ func getOpenSkyFailoverStats() openSkyFailoverStats {
 
 func resetOpenSkyFailoverStats() {
 	openSkyFailoverDiagnostics.reset()
+}
+
+type upstreamProbeResult struct {
+	Name       string `json:"name"`
+	URL        string `json:"url,omitempty"`
+	Configured bool   `json:"configured"`
+	Success    bool   `json:"success"`
+	StatusCode int    `json:"statusCode,omitempty"`
+	DurationMS int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
+}
+
+func getUpstreamProbePath() string {
+	if probePath := strings.TrimSpace(os.Getenv("OPENSKY_PROBE_PATH")); probePath != "" {
+		if strings.HasPrefix(probePath, "/") {
+			return probePath
+		}
+		return "/" + probePath
+	}
+
+	return defaultUpstreamProbePath
+}
+
+func getUpstreamProbeTimeout() time.Duration {
+	if timeoutSeconds := os.Getenv("OPENSKY_PROBE_TIMEOUT_SECONDS"); timeoutSeconds != "" {
+		if seconds, err := strconv.Atoi(timeoutSeconds); err == nil && seconds >= 1 && seconds <= 30 {
+			return time.Duration(seconds) * time.Second
+		}
+	}
+
+	if openSkyRequestTimeout < 5*time.Second {
+		return openSkyRequestTimeout
+	}
+
+	return 5 * time.Second
+}
+
+func probeUpstream(name, baseURL, probePath string, timeout time.Duration) upstreamProbeResult {
+	result := upstreamProbeResult{
+		Name:       name,
+		Configured: strings.TrimSpace(baseURL) != "",
+	}
+
+	if !result.Configured {
+		result.Error = "not configured"
+		return result
+	}
+
+	url := strings.TrimRight(baseURL, "/") + probePath
+	result.URL = url
+
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		result.Error = fmt.Sprintf("failed to create request: %v", err)
+		return result
+	}
+
+	if openSkyAPIKey != "" {
+		req.Header.Set("X-Proxy-Key", openSkyAPIKey)
+	}
+
+	started := time.Now()
+	resp, err := client.Do(req)
+	result.DurationMS = time.Since(started).Milliseconds()
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	result.StatusCode = resp.StatusCode
+	result.Success = resp.StatusCode == http.StatusOK
+	if !result.Success {
+		result.Error = fmt.Sprintf("status %d", resp.StatusCode)
+	}
+
+	return result
+}
+
+func probeOpenSkyUpstreams() map[string]interface{} {
+	probePath := getUpstreamProbePath()
+	timeout := getUpstreamProbeTimeout()
+	primary := probeUpstream("primary", openSkyBaseURL, probePath, timeout)
+	fallback := probeUpstream("fallback", openSkyFallbackBaseURL, probePath, timeout)
+
+	return map[string]interface{}{
+		"timeUtc":   time.Now().UTC().Format(time.RFC3339),
+		"probePath": probePath,
+		"timeoutMs": timeout.Milliseconds(),
+		"primary":   primary,
+		"fallback":  fallback,
+	}
 }
 
 // parseStates converts OpenSky's mixed arrays into typed Flight structs

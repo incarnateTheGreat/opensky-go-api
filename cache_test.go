@@ -205,3 +205,21 @@ func TestCacheTTL(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheGetStale(t *testing.T) {
+	cache := NewCache()
+
+	cache.Set("stale", "value", 30*time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
+
+	value, found, staleAge := cache.GetStale("stale")
+	if !found {
+		t.Fatal("expected stale key to be found")
+	}
+	if value != "value" {
+		t.Fatalf("expected stale value, got %v", value)
+	}
+	if staleAge <= 0 {
+		t.Fatalf("expected positive stale age, got %v", staleAge)
+	}
+}

@@ -88,7 +88,9 @@ func main() {
 	router.GET("/cache/stats", getCacheStats)
 	if os.Getenv("APP_ENV") != "production" {
 		router.GET("/debug/cors", getCORSDebug)
+		router.GET("/debug/upstream", getUpstreamDebug)
 		fmt.Println("✅ CORS debug endpoint enabled: /debug/cors")
+		fmt.Println("✅ Upstream debug endpoint enabled: /debug/upstream")
 	}
 
 	// Flight endpoints (real-time)
