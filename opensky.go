@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +34,11 @@ var openSkyClient *http.Client
 
 // openSkyAPIKey is an optional key for authenticated proxy requests
 var openSkyAPIKey string
+
+// openSkyClientID and openSkyClientSecret are optional OpenSky credentials
+// used for direct OpenSky upstream calls.
+var openSkyClientID string
+var openSkyClientSecret string
 
 // openSkyRequestTimeout controls upstream HTTP timeout per attempt.
 var openSkyRequestTimeout = 12 * time.Second
@@ -70,6 +76,8 @@ func init() {
 
 	// Optional API key for proxy authentication
 	openSkyAPIKey = os.Getenv("OPENSKY_API_KEY")
+	openSkyClientID = os.Getenv("OPENSKY_CLIENT_ID")
+	openSkyClientSecret = os.Getenv("OPENSKY_CLIENT_SECRET")
 
 	if timeoutSeconds := os.Getenv("OPENSKY_TIMEOUT_SECONDS"); timeoutSeconds != "" {
 		if seconds, err := strconv.Atoi(timeoutSeconds); err == nil && seconds >= 3 && seconds <= 60 {
@@ -269,9 +277,7 @@ func doFetchWithAttempts(targetURL string, maxAttempts int) ([]Flight, int64, er
 		}
 
 		// Add proxy auth key if configured
-		if openSkyAPIKey != "" {
-			req.Header.Set("X-Proxy-Key", openSkyAPIKey)
-		}
+		applyUpstreamAuth(req, targetURL)
 
 		resp, err := openSkyClient.Do(req)
 		if err != nil {
@@ -583,9 +589,7 @@ func probeUpstream(name, baseURL, probePath string, timeout time.Duration) upstr
 		return result
 	}
 
-	if openSkyAPIKey != "" {
-		req.Header.Set("X-Proxy-Key", openSkyAPIKey)
-	}
+	applyUpstreamAuth(req, url)
 
 	started := time.Now()
 	resp, err := client.Do(req)
@@ -620,6 +624,29 @@ func probeOpenSkyUpstreams() map[string]interface{} {
 		"primary":   primary,
 		"fallback":  fallback,
 	}
+}
+
+func applyUpstreamAuth(req *http.Request, targetURL string) {
+	if shouldUseProxyAuth(targetURL) {
+		if openSkyAPIKey != "" {
+			req.Header.Set("X-Proxy-Key", openSkyAPIKey)
+		}
+		return
+	}
+
+	if openSkyClientID != "" && openSkyClientSecret != "" {
+		req.SetBasicAuth(openSkyClientID, openSkyClientSecret)
+	}
+}
+
+func shouldUseProxyAuth(targetURL string) bool {
+	parsed, err := neturl.Parse(targetURL)
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	return strings.Contains(host, "workers.dev")
 }
 
 // parseStates converts OpenSky's mixed arrays into typed Flight structs

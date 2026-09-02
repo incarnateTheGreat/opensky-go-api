@@ -469,3 +469,72 @@ func TestFetchFlights_ServesStaleWhenPrimaryAndFallbackFail(t *testing.T) {
 		t.Fatalf("expected positive lastStaleAgeMs, got %d", stats.LastStaleAgeMS)
 	}
 }
+
+func TestFetchFlights_UsesClientCredentialsForDirectUpstream(t *testing.T) {
+	const expectedUser = "client-id"
+	const expectedPass = "client-secret"
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok {
+			t.Fatal("expected basic auth to be set")
+		}
+		if user != expectedUser || pass != expectedPass {
+			t.Fatalf("unexpected basic auth credentials: %q %q", user, pass)
+		}
+
+		response := OpenSkyResponse{Time: 1234567890, States: [][]interface{}{}}
+		mustEncodeJSON(t, w, response)
+	}))
+	defer mockServer.Close()
+
+	originalBaseURL := openSkyBaseURL
+	originalClientID := openSkyClientID
+	originalClientSecret := openSkyClientSecret
+	defer func() {
+		openSkyBaseURL = originalBaseURL
+		openSkyClientID = originalClientID
+		openSkyClientSecret = originalClientSecret
+	}()
+
+	openSkyBaseURL = mockServer.URL
+	openSkyClientID = expectedUser
+	openSkyClientSecret = expectedPass
+	flightCache.Clear()
+
+	_, _, err := fetchFlights("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyUpstreamAuth_UsesProxyKeyForWorkerURL(t *testing.T) {
+	const expectedProxyKey = "proxy-key"
+
+	originalProxyKey := openSkyAPIKey
+	originalClientID := openSkyClientID
+	originalClientSecret := openSkyClientSecret
+	defer func() {
+		openSkyAPIKey = originalProxyKey
+		openSkyClientID = originalClientID
+		openSkyClientSecret = originalClientSecret
+	}()
+
+	openSkyAPIKey = expectedProxyKey
+	openSkyClientID = "client-id"
+	openSkyClientSecret = "client-secret"
+
+	req, err := http.NewRequest(http.MethodGet, "https://example.workers.dev/api/states/all", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	applyUpstreamAuth(req, req.URL.String())
+
+	if got := req.Header.Get("X-Proxy-Key"); got != expectedProxyKey {
+		t.Fatalf("expected X-Proxy-Key %q, got %q", expectedProxyKey, got)
+	}
+	if _, _, ok := req.BasicAuth(); ok {
+		t.Fatal("did not expect basic auth for worker request")
+	}
+}

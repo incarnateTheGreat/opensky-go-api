@@ -31,11 +31,11 @@ Built with Go and [Gin](https://github.com/gin-gonic/gin).
 
 ### System
 
-| Method | Path           | Description                           |
-| ------ | -------------- | ------------------------------------- |
-| GET    | `/ping`        | Health check                          |
-| GET    | `/cache/stats` | Cache statistics                      |
-| GET    | `/debug/cors`  | CORS debug info (non-production only) |
+| Method | Path              | Description                                         |
+| ------ | ----------------- | --------------------------------------------------- |
+| GET    | `/ping`           | Health check                                        |
+| GET    | `/cache/stats`    | Cache statistics                                    |
+| GET    | `/debug/cors`     | CORS debug info (non-production only)               |
 | GET    | `/debug/upstream` | Probe upstream latency/status (non-production only) |
 
 `/cache/stats` now also includes upstream failover diagnostics (`upstream`) with counters and last-event details, including:
@@ -69,6 +69,11 @@ OPENSKY_BASE_URL=https://opensky-network.org
 
 # Optional fallback (for example, Cloudflare Worker)
 OPENSKY_FALLBACK_BASE_URL=https://your-worker.workers.dev
+
+# Optional direct OpenSky credentials (recommended in production)
+# Applied as HTTP Basic Auth to non-worker upstream requests
+OPENSKY_CLIENT_ID=your_opensky_client_id
+OPENSKY_CLIENT_SECRET=your_opensky_client_secret
 
 # API key for proxy authentication
 OPENSKY_API_KEY=your_key
