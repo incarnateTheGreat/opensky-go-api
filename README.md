@@ -31,10 +31,11 @@ Built with Go and [Gin](https://github.com/gin-gonic/gin).
 
 ### System
 
-| Method | Path           | Description      |
-| ------ | -------------- | ---------------- |
-| GET    | `/ping`        | Health check     |
-| GET    | `/cache/stats` | Cache statistics |
+| Method | Path           | Description                           |
+| ------ | -------------- | ------------------------------------- |
+| GET    | `/ping`        | Health check                          |
+| GET    | `/cache/stats` | Cache statistics                      |
+| GET    | `/debug/cors`  | CORS debug info (non-production only) |
 
 ## Run Locally
 
@@ -61,7 +62,36 @@ OPENSKY_BASE_URL=https://your-worker.workers.dev
 
 # API key for proxy authentication
 OPENSKY_API_KEY=your_key
+
+# Comma-separated list of allowed frontend origins for browser requests
+# Example: http://localhost:5173,https://your-app.pages.dev
+CORS_ALLOWED_ORIGINS=http://localhost:5173
+
+# Set to "production" in Railway to disable debug endpoints
+APP_ENV=development
 ```
+
+### Verify CORS Manually
+
+Replace `<API_URL>` and `<ORIGIN>` with your deployed API and frontend origin.
+
+```bash
+# Simple CORS request (should include access-control-allow-origin)
+curl -i "<API_URL>/ping" \
+	-H "Origin: <ORIGIN>"
+
+# Preflight request (should return 204 and allow headers/methods)
+curl -i -X OPTIONS "<API_URL>/ping" \
+	-H "Origin: <ORIGIN>" \
+	-H "Access-Control-Request-Method: GET" \
+	-H "Access-Control-Request-Headers: Content-Type"
+```
+
+Expected:
+
+- `Access-Control-Allow-Origin: <ORIGIN>` for allowed origins
+- `204 No Content` for successful preflight
+- `403 Forbidden` when origin is not in `CORS_ALLOWED_ORIGINS`
 
 ## Testing
 

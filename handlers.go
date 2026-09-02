@@ -43,6 +43,18 @@ func getCacheStats(c *gin.Context) {
 	})
 }
 
+// getCORSDebug handles GET /debug/cors
+// This endpoint is registered only outside production to help diagnose CORS issues.
+func getCORSDebug(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"origin":                      c.GetHeader("Origin"),
+		"accessControlRequestMethod":  c.GetHeader("Access-Control-Request-Method"),
+		"accessControlRequestHeaders": c.GetHeader("Access-Control-Request-Headers"),
+		"method":                      c.Request.Method,
+		"path":                        c.Request.URL.Path,
+	})
+}
+
 // getFlightsByArea handles GET /flights/area?lamin=...&lamax=...&lomin=...&lomax=...
 // @Summary List flights in area
 // @Description Get flights within a geographic bounding box
