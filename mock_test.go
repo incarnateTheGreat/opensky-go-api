@@ -538,3 +538,25 @@ func TestApplyUpstreamAuth_UsesProxyKeyForWorkerURL(t *testing.T) {
 		t.Fatal("did not expect basic auth for worker request")
 	}
 }
+
+func TestAuthModeForTarget(t *testing.T) {
+	originalProxyKey := openSkyAPIKey
+	originalClientID := openSkyClientID
+	originalClientSecret := openSkyClientSecret
+	defer func() {
+		openSkyAPIKey = originalProxyKey
+		openSkyClientID = originalClientID
+		openSkyClientSecret = originalClientSecret
+	}()
+
+	openSkyAPIKey = "proxy-key"
+	openSkyClientID = "client-id"
+	openSkyClientSecret = "client-secret"
+
+	if got := authModeForTarget("https://example.workers.dev/api/states/all"); got != "proxy_key" {
+		t.Fatalf("expected proxy_key, got %s", got)
+	}
+	if got := authModeForTarget("https://opensky-network.org/api/states/all"); got != "basic_auth" {
+		t.Fatalf("expected basic_auth, got %s", got)
+	}
+}

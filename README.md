@@ -139,6 +139,7 @@ Look at:
 
 - `primary.success`, `primary.durationMs`, `primary.statusCode`, `primary.error`
 - `fallback.success`, `fallback.durationMs`, `fallback.statusCode`, `fallback.error`
+- `primary.authMode` and `fallback.authMode` to verify whether credentials are being used (`basic_auth`, `proxy_key`, or `none`)
 - `probePath` and `timeoutMs` used for the probe
 
 ### Verify CORS Manually

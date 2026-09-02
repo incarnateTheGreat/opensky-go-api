@@ -537,6 +537,7 @@ type upstreamProbeResult struct {
 	Name       string `json:"name"`
 	URL        string `json:"url,omitempty"`
 	Configured bool   `json:"configured"`
+	AuthMode   string `json:"authMode"`
 	Success    bool   `json:"success"`
 	StatusCode int    `json:"statusCode,omitempty"`
 	DurationMS int64  `json:"durationMs"`
@@ -572,6 +573,7 @@ func probeUpstream(name, baseURL, probePath string, timeout time.Duration) upstr
 	result := upstreamProbeResult{
 		Name:       name,
 		Configured: strings.TrimSpace(baseURL) != "",
+		AuthMode:   "none",
 	}
 
 	if !result.Configured {
@@ -581,6 +583,7 @@ func probeUpstream(name, baseURL, probePath string, timeout time.Duration) upstr
 
 	url := strings.TrimRight(baseURL, "/") + probePath
 	result.URL = url
+	result.AuthMode = authModeForTarget(url)
 
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -627,16 +630,29 @@ func probeOpenSkyUpstreams() map[string]interface{} {
 }
 
 func applyUpstreamAuth(req *http.Request, targetURL string) {
-	if shouldUseProxyAuth(targetURL) {
+	switch authModeForTarget(targetURL) {
+	case "proxy_key":
 		if openSkyAPIKey != "" {
 			req.Header.Set("X-Proxy-Key", openSkyAPIKey)
 		}
-		return
+	case "basic_auth":
+		req.SetBasicAuth(openSkyClientID, openSkyClientSecret)
+	}
+}
+
+func authModeForTarget(targetURL string) string {
+	if shouldUseProxyAuth(targetURL) {
+		if openSkyAPIKey != "" {
+			return "proxy_key"
+		}
+		return "none"
 	}
 
 	if openSkyClientID != "" && openSkyClientSecret != "" {
-		req.SetBasicAuth(openSkyClientID, openSkyClientSecret)
+		return "basic_auth"
 	}
+
+	return "none"
 }
 
 func shouldUseProxyAuth(targetURL string) bool {
