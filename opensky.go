@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,13 +38,20 @@ var openSkyMaxAttempts = 2
 func init() {
 	// Allow overriding the base URL (for Cloudflare Worker proxy)
 	if baseURL := os.Getenv("OPENSKY_BASE_URL"); baseURL != "" {
-		openSkyBaseURL = baseURL
-		fmt.Printf("✅ OpenSky base URL: %s\n", baseURL)
+		openSkyBaseURL = strings.TrimRight(baseURL, "/")
+		fmt.Printf("✅ OpenSky base URL: %s\n", openSkyBaseURL)
 	}
 
 	if fallbackBaseURL := os.Getenv("OPENSKY_FALLBACK_BASE_URL"); fallbackBaseURL != "" {
-		openSkyFallbackBaseURL = fallbackBaseURL
-		fmt.Printf("✅ OpenSky fallback base URL: %s\n", fallbackBaseURL)
+		openSkyFallbackBaseURL = strings.TrimRight(fallbackBaseURL, "/")
+		fmt.Printf("✅ OpenSky fallback base URL: %s\n", openSkyFallbackBaseURL)
+	}
+
+	// If using a Cloudflare Worker and no explicit fallback is set,
+	// automatically use direct OpenSky as fallback.
+	if openSkyFallbackBaseURL == "" && strings.Contains(openSkyBaseURL, ".workers.dev") {
+		openSkyFallbackBaseURL = "https://opensky-network.org"
+		fmt.Printf("✅ OpenSky fallback base URL (auto): %s\n", openSkyFallbackBaseURL)
 	}
 
 	// Optional API key for proxy authentication
