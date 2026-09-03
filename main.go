@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -46,6 +47,30 @@ func getCORSAllowedOrigins() []string {
 	return origins
 }
 
+func isLocalDevOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "127.0.0.1"
+}
+
+func isOriginAllowed(origin string, allowlist []string) bool {
+	if isLocalDevOrigin(origin) {
+		return true
+	}
+
+	for _, allowed := range allowlist {
+		if origin == allowed {
+			return true
+		}
+	}
+
+	return false
+}
+
 func main() {
 	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
@@ -69,6 +94,9 @@ func main() {
 	allowedOrigins := getCORSAllowedOrigins()
 	router.Use(cors.New(cors.Config{
 		AllowOrigins: allowedOrigins,
+		AllowOriginFunc: func(origin string) bool {
+			return isOriginAllowed(origin, allowedOrigins)
+		},
 		AllowMethods: []string{"GET", "OPTIONS"},
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"},
 		MaxAge:       12 * time.Hour,
